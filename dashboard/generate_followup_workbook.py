@@ -44,7 +44,7 @@ def create_followup_workbook(data_file: Path = DEFAULT_DATA, output_file: Path =
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 34
 
-    fixed = [("A2:A3", "受试者编号"), ("B2:B3", "年龄"), ("C2:C3", "年龄组"), ("D2:D3", "受试者状态"),
+    fixed = [("A2:A3", "试验参与者编号"), ("B2:B3", "年龄"), ("C2:C3", "年龄组"), ("D2:D3", "试验参与者状态"),
              ("E2:E3", "知情日期\nV1（筛选，不超过2周）"), ("F2:F3", "V1发药日期\nV1（基线 D-1）")]
     for cell_range, label in fixed:
         ws.merge_cells(cell_range)
@@ -72,10 +72,10 @@ def create_followup_workbook(data_file: Path = DEFAULT_DATA, output_file: Path =
 
     for idx, record in schedule.iterrows():
         row = idx + 4
-        ws.cell(row, 1, record["受试者编号"])
+        ws.cell(row, 1, record["试验参与者编号"])
         ws.cell(row, 2, None if record["年龄"] != record["年龄"] else float(record["年龄"]))
         ws.cell(row, 3, record["年龄组"])
-        ws.cell(row, 4, record["受试者状态"])
+        ws.cell(row, 4, record["试验参与者状态"])
         ws.cell(row, 5, record["知情日期"].to_pydatetime() if record["知情日期"] == record["知情日期"] else None)
         ws.cell(row, 6, record["V1发药日期"].to_pydatetime() if record["V1发药日期"] == record["V1发药日期"] else None)
         for visit, start_col in visit_starts.items():

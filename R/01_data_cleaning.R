@@ -63,7 +63,7 @@ duplicate_visits <- ygtss_long_all %>%
 
 if (nrow(duplicate_visits) > 0) {
   stop(
-    "发现同一受试者同一访视的重复记录：\n",
+    "发现同一试验参与者同一访视的重复记录：\n",
     paste(capture.output(print(duplicate_visits)), collapse = "\n")
   )
 }
@@ -74,7 +74,7 @@ saveRDS(ygtss_long_all, file.path(intermediate_dir, "ygtss_long_all.rds"))
 
 dm_export <- data_DM %>%
   transmute(
-    受试者编号 = subject_id,
+    试验参与者编号 = subject_id,
     性别 = sex,
     出生日期 = birth_date,
     年龄 = age,
@@ -88,7 +88,7 @@ write_excel_csv_cn(
 
 ygtss_export <- ygtss_long_all %>%
   transmute(
-    受试者编号 = subject_id,
+    试验参与者编号 = subject_id,
     年龄 = age,
     年龄分组 = age_group,
     访视 = visit,
@@ -106,8 +106,8 @@ write_excel_csv_cn(
 
 cat(
   "数据清理完成：\n",
-  "- DM受试者：", n_distinct(data_DM$subject_id), "\n",
-  "- YGTSS受试者：", n_distinct(ygtss_long_all$subject_id), "\n",
+  "- DM试验参与者：", n_distinct(data_DM$subject_id), "\n",
+  "- YGTSS试验参与者：", n_distinct(ygtss_long_all$subject_id), "\n",
   "- A组：", sum(data_DM$age_group == age_group_levels[1], na.rm = TRUE), "\n",
   "- B组：", sum(data_DM$age_group == age_group_levels[2], na.rm = TRUE), "\n",
   "- C组：", sum(data_DM$age_group == age_group_levels[3], na.rm = TRUE), "\n",

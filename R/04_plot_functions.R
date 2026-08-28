@@ -147,7 +147,7 @@ make_group_plots <- function(result) {
       expand = expansion(mult = c(0.02, 0.02))
     ) +
     labs(
-      title = paste0(result$group_label, "：各受试者YGTSS-TTS评分变化趋势"),
+      title = paste0(result$group_label, "：各试验参与者YGTSS-TTS评分变化趋势"),
       subtitle = paste0(
         "V1=基线，V2=第2周，V3=第4周，V4=第6周，V5=第8周，V6=第12周；",
         "红色标题表示V5较V1降幅不足30%"
@@ -195,7 +195,7 @@ make_group_plots <- function(result) {
     scale_x_discrete(drop = FALSE) +
     scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, 10)) +
     labs(
-      title = paste0(result$group_label, "：各受试者YGTSS总损害分变化趋势"),
+      title = paste0(result$group_label, "：各试验参与者YGTSS总损害分变化趋势"),
       subtitle = "V1=基线，V2=第2周，V3=第4周，V4=第6周，V5=第8周，V6=第12周",
       x = "访视", y = "总损害分（0–50分）"
     ) +
@@ -255,7 +255,7 @@ make_group_plots <- function(result) {
       title = paste0(result$group_label, "：YGTSS-TTS各访视时间点变化趋势"),
       subtitle = paste0(
         "V1=基线，V2=第2周，V3=第4周，V4=第6周，V5=第8周，V6=第12周\n",
-        "蓝线为观察均值，误差线为标准误，灰线为各受试者变化趋势"
+        "蓝线为观察均值，误差线为标准误，灰线为各试验参与者变化趋势"
       ),
       x = "访视时间", y = "YGTSS-TTS（0–50分）"
     ) +
@@ -321,7 +321,7 @@ make_group_plots <- function(result) {
       title = paste0(result$group_label, "：YGTSS总损害分各访视时间点变化趋势"),
       subtitle = paste0(
         "V1=基线，V2=第2周，V3=第4周，V4=第6周，V5=第8周，V6=第12周\n",
-        "棕色线为观察均值，误差线为标准误，灰线为各受试者变化趋势"
+        "棕色线为观察均值，误差线为标准误，灰线为各试验参与者变化趋势"
       ),
       x = "访视时间", y = "YGTSS总损害分（0–50分）"
     ) +

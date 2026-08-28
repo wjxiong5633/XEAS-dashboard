@@ -129,7 +129,7 @@ try:
     else:
         st.title("XEAS随访数据及主要疗效看板")
         st.info("请在左侧上传包含 DM、QS_YGTSS 和 SV 工作表的 Excel 文件。")
-        st.caption("为保护受试者数据，在线版不内置原始数据；上传文件仅用于当前会话的分析。")
+        st.caption("为保护试验参与者数据，在线版不内置原始数据；上传文件仅用于当前会话的分析。")
         st.stop()
 except Exception as exc:
     st.error(f"数据读取失败：{exc}")
@@ -158,15 +158,15 @@ with efficacy_tab:
 
 with project_tab:
     recruitment = recruitment_summary(bundle)
-    st.subheader("受试者进展")
+    st.subheader("试验参与者进展")
     progress_cols = st.columns(5)
     progress_cols[0].metric("已筛选", recruitment["已筛选"])
-    progress_cols[1].metric("已入组", recruitment["已入组"], help="包括当前已入组、已完成试验及已退出的受试者。")
+    progress_cols[1].metric("已入组", recruitment["已入组"], help="包括当前已入组、已完成试验及已退出的试验参与者。")
     progress_cols[2].metric("筛选失败", recruitment["筛选失败"])
     progress_cols[3].metric("筛选中", recruitment["筛选中"])
     progress_cols[4].metric("已退出", recruitment["已退出"])
     st.caption(f"当前已完成试验 {recruitment['已完成试验']} 人；“已入组”口径包含已完成试验和退出者。筛选失败及退出名单采用人工补充口径。")
-    with st.expander("查看筛选失败及退出受试者名单"):
+    with st.expander("查看筛选失败及退出试验参与者名单"):
         st.dataframe(fmt_table(disposition_detail(bundle)), hide_index=True, use_container_width=True)
 
     st.subheader("各访视完成情况")
@@ -182,12 +182,12 @@ with project_tab:
         st.plotly_chart(visit_fig, use_container_width=True)
     with visit_right:
         st.dataframe(visit_counts, hide_index=True, use_container_width=True, height=315)
-        st.caption("按SV工作表中“是否进行本次访视=是”的唯一受试者计数；V1及后续访视排除已确认的筛选失败者。")
+        st.caption("按SV工作表中“是否进行本次访视=是”的唯一试验参与者计数；V1及后续访视排除已确认的筛选失败者。")
 
 with efficacy_overview_tab:
     st.subheader("主要疗效概览")
     efficacy_cols = st.columns(5)
-    efficacy_cols[0].metric("YGTSS受试者", data["subject_id"].nunique())
+    efficacy_cols[0].metric("YGTSS试验参与者", data["subject_id"].nunique())
     efficacy_cols[1].metric("V1/V5可评价", len(evaluable))
     efficacy_cols[2].metric("第8周30%应答率", "--" if pd.isna(response_rate) else f"{response_rate:.2f}%", f"{responders}人应答")
     efficacy_cols[3].metric("未达到30%", nonresponders)
@@ -202,25 +202,25 @@ with efficacy_overview_tab:
     with right:
         st.dataframe(fmt_table(summary30), hide_index=True, use_container_width=True, height=390)
     if len(evaluable):
-        st.info(f"第8周共{len(evaluable)}名受试者可评价，其中{responders}名YGTSS-TTS较基线降低至少30%，应答率为{response_rate:.2f}%。")
+        st.info(f"第8周共{len(evaluable)}名试验参与者可评价，其中{responders}名YGTSS-TTS较基线降低至少30%，应答率为{response_rate:.2f}%。")
 
 with followup_tab:
-    st.subheader("去标识化受试者随访表")
+    st.subheader("去标识化试验参与者随访表")
     st.caption("不显示姓名、门诊号和电话。理论访视日期以V1发药日期为起点计算，允许窗为±2天。")
     followup_table_tab, calendar_tab, visit_matrix_tab, visit_audit_tab = st.tabs(["随访总表", "随访日历", "访视完成矩阵", "访视人数核对"])
     with followup_table_tab:
         schedule = followup_schedule(bundle)
         schedule["年龄组"] = schedule["年龄组"].fillna("年龄未分组")
         filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1.1, 1.8, 1.8, 1.5])
-        subject_search = filter_col1.text_input("搜索受试者编号", placeholder="例如 S01014")
-        available_statuses = [x for x in ["已入组", "完成试验", "退出", "筛选失败", "数据待补充"] if x in set(schedule["受试者状态"])]
-        selected_statuses = filter_col2.multiselect("受试者状态", available_statuses, default=available_statuses)
+        subject_search = filter_col1.text_input("搜索试验参与者编号", placeholder="例如 S01014")
+        available_statuses = [x for x in ["已入组", "完成试验", "退出", "筛选失败", "数据待补充"] if x in set(schedule["试验参与者状态"])]
+        selected_statuses = filter_col2.multiselect("试验参与者状态", available_statuses, default=available_statuses)
         available_age_groups = [*AGE_GROUPS, "年龄未分组"]
         selected_age_groups = filter_col3.multiselect("年龄组", available_age_groups, default=available_age_groups)
         visit_filter = filter_col4.selectbox("访视完成情况", ["全部", "V1未完成", "V2未完成", "V3未完成", "V4未完成", "V5未完成", "V6未完成"])
         if subject_search.strip():
-            schedule = schedule[schedule["受试者编号"].str.contains(subject_search.strip(), case=False, na=False)]
-        schedule = schedule[schedule["受试者状态"].isin(selected_statuses) & schedule["年龄组"].isin(selected_age_groups)]
+            schedule = schedule[schedule["试验参与者编号"].str.contains(subject_search.strip(), case=False, na=False)]
+        schedule = schedule[schedule["试验参与者状态"].isin(selected_statuses) & schedule["年龄组"].isin(selected_age_groups)]
         if visit_filter != "全部":
             visit = visit_filter[:2]
             target_col = "V1发药日期" if visit == "V1" else f"{visit}实际日期"
@@ -231,8 +231,8 @@ with followup_tab:
             display_schedule[col] = pd.to_datetime(display_schedule[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
         display_schedule = fmt_table(display_schedule)
         styled_schedule = display_schedule.style.apply(
-            lambda row: (["background-color:#fff2cc"] * len(row) if row["受试者状态"] == "筛选失败"
-                         else ["background-color:#d9ead3"] * len(row) if row["受试者状态"] == "退出"
+            lambda row: (["background-color:#fff2cc"] * len(row) if row["试验参与者状态"] == "筛选失败"
+                         else ["background-color:#d9ead3"] * len(row) if row["试验参与者状态"] == "退出"
                          else [""] * len(row)), axis=1
         )
         st.dataframe(styled_schedule, hide_index=True, use_container_width=True, height=590)
@@ -245,7 +245,7 @@ with followup_tab:
         calendar = followup_calendar(bundle, today)
         calendar["年龄组"] = calendar["年龄组"].fillna("年龄未分组")
 
-        active_calendar = calendar[~calendar["受试者状态"].isin(["退出", "筛选失败"])]
+        active_calendar = calendar[~calendar["试验参与者状态"].isin(["退出", "筛选失败"])]
         due_today = active_calendar[
             active_calendar["实际日期"].isna()
             & active_calendar["允许窗起"].le(today)
@@ -258,7 +258,7 @@ with followup_tab:
         overdue = active_calendar[active_calendar["随访状态"].eq("逾期未访")]
         cal_metrics = st.columns(4)
         cal_metrics[0].metric("今日日期", today.strftime("%Y-%m-%d"))
-        cal_metrics[1].metric("今日在访视窗", due_today["受试者编号"].nunique())
+        cal_metrics[1].metric("今日在访视窗", due_today["试验参与者编号"].nunique())
         cal_metrics[2].metric("未来7天计划随访", len(next_seven))
         cal_metrics[3].metric("逾期未访", len(overdue))
 
@@ -266,8 +266,8 @@ with followup_tab:
         start_date = pd.Timestamp(date_col1.date_input("查看起始日期", value=today.date()))
         end_date = pd.Timestamp(date_col2.date_input("查看结束日期", value=(today + pd.Timedelta(days=14)).date()))
         selected_visits = visit_col.multiselect("访视", VISITS[1:], default=VISITS[1:])
-        person_status_options = [x for x in ["已入组", "完成试验", "退出", "数据待补充"] if x in set(calendar["受试者状态"])]
-        selected_person_status = person_status_col.multiselect("受试者状态", person_status_options, default=person_status_options)
+        person_status_options = [x for x in ["已入组", "完成试验", "退出", "数据待补充"] if x in set(calendar["试验参与者状态"])]
+        selected_person_status = person_status_col.multiselect("试验参与者状态", person_status_options, default=person_status_options)
         status_options = ["待访", "访视窗内", "逾期未访", "窗内完成", "窗外完成"]
         selected_cal_status = cal_status_col.multiselect("随访状态", status_options, default=status_options)
         if end_date < start_date:
@@ -279,14 +279,14 @@ with followup_tab:
                 calendar["允许窗起"].le(end_date)
                 & calendar["允许窗止"].ge(start_date)
                 & calendar["访视"].isin(selected_visits)
-                & calendar["受试者状态"].isin(selected_person_status)
+                & calendar["试验参与者状态"].isin(selected_person_status)
                 & calendar["随访状态"].isin(selected_cal_status)
             ].copy()
         cal_date_cols = ["理论日期", "允许窗起", "允许窗止", "实际日期"]
         for col in cal_date_cols:
             calendar_view[col] = pd.to_datetime(calendar_view[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
         styled_calendar = fmt_table(calendar_view).style.apply(
-            lambda row: (["background-color:#d9ead3"] * len(row) if row["受试者状态"] == "退出"
+            lambda row: (["background-color:#d9ead3"] * len(row) if row["试验参与者状态"] == "退出"
                          else ["background-color:#fce8e6;color:#9b1c1c"] * len(row) if row["随访状态"] == "逾期未访"
                          else ["background-color:#fff2cc"] * len(row) if row["随访状态"] == "访视窗内"
                          else [""] * len(row)), axis=1
@@ -295,7 +295,7 @@ with followup_tab:
         st.caption(f"当前显示 {len(calendar_view)} 条应访记录。查询日期与±2天访视窗有交集即显示；红色=逾期未访，黄色=当前在访视窗，绿色=已退出。顶部待访指标不计已退出者。")
     with visit_matrix_tab:
         st.subheader("疗效分析人群访视完成矩阵")
-        st.caption("仅显示进入后续疗效分析的受试者；绿色表示该访视有YGTSS-TTS评分，黄色表示缺失。筛选失败者不在本矩阵中。")
+        st.caption("仅显示进入后续疗效分析的试验参与者；绿色表示该访视有YGTSS-TTS评分，黄色表示缺失。筛选失败者不在本矩阵中。")
         comp = completeness(bundle)
         styled = comp.style.map(
             lambda x: "background-color:#d9ead3;color:#176b2c" if x is True
@@ -383,7 +383,7 @@ with age_tab:
     st.warning("A组样本量较小，年龄亚组结果仅作描述性解读。")
 
 with individual_tab:
-    st.caption("按年龄组展示全部受试者，每行5人；绿色表示已退出，红色表示V5可评价但TTS降低未达到30%，黄色表示缺少V5。")
+    st.caption("按年龄组展示全部试验参与者，每行5人；绿色表示已退出，红色表示V5可评价但TTS降低未达到30%，黄色表示缺少V5。")
     control1, control2 = st.columns([1, 1.4])
     status = control1.radio("显示人群", ["全部", "达到30%", "未达到30%", "缺少V5"], horizontal=True)
     chart_type = control2.radio("个体图类型", ["TTS及组成评分", "总损害分"], horizontal=True)
@@ -400,7 +400,7 @@ with individual_tab:
             group_outcomes = group_outcomes.sort_values("subject_id")
             st.markdown(f"**{age_group}：{len(group_outcomes)}人**")
             if group_outcomes.empty:
-                st.info("当前筛选条件下没有受试者。")
+                st.info("当前筛选条件下没有试验参与者。")
             for start in range(0, len(group_outcomes), 5):
                 columns = st.columns(5)
                 for column, (_, outcome) in zip(columns, group_outcomes.iloc[start:start + 5].iterrows()):
@@ -409,7 +409,7 @@ with individual_tab:
                         st.plotly_chart(individual_chart(person, outcome, chart_type), use_container_width=True, config={"displayModeBar": False})
     ungrouped = bundle.v5_change[bundle.v5_change["age_group"].isna()]
     if not ungrouped.empty:
-        st.caption(f"另有{len(ungrouped)}名受试者因年龄缺失或超出分组范围，未进入A/B/C个体图。")
+        st.caption(f"另有{len(ungrouped)}名试验参与者因年龄缺失或超出分组范围，未进入A/B/C个体图。")
 
 with quality_tab:
     st.subheader("上传数据检查")
@@ -419,7 +419,7 @@ with quality_tab:
     m2.metric("V1和V5均缺失", int(((bundle.v5_change["baseline_v1"].isna()) & (bundle.v5_change["week8_v5"].isna())).sum()))
     m3.metric("DM年龄缺失/范围外（含筛败）", int(bundle.dm["age_group"].isna().sum()))
     m4.metric("疗效分析人群年龄未分组", int(bundle.v5_change["age_group"].isna().sum()))
-    st.caption("DM口径包含全部已记录受试者，因此包括年龄缺失的筛选失败者S01053；疗效分析口径已排除筛败者。")
+    st.caption("DM口径包含全部已记录试验参与者，因此包括年龄缺失的筛选失败者S01053；疗效分析口径已排除筛败者。")
     st.subheader("缺少V5名单")
     st.dataframe(fmt_table(bundle.v5_change[bundle.v5_change["week8_v5"].isna()]),hide_index=True,use_container_width=True)
     st.subheader("可评价但未达到30%名单")

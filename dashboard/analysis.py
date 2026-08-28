@@ -126,17 +126,17 @@ def load_and_analyse(source: str | Path | BinaryIO | bytes, source_name: str = "
 
     duplicate = long.groupby(["subject_id", "visit"]).size().reset_index(name="n").query("n > 1")
     checks = [
-        ("DM工作表", "通过", len(dm), "已识别受试者"),
-        ("QS_YGTSS工作表", "通过", long["subject_id"].nunique(), "已识别YGTSS受试者"),
+        ("DM工作表", "通过", len(dm), "已识别试验参与者"),
+        ("QS_YGTSS工作表", "通过", long["subject_id"].nunique(), "已识别YGTSS试验参与者"),
         ("重复ID-访视", "通过" if duplicate.empty else "需处理", len(duplicate), "同一ID同一访视重复"),
         ("筛选失败排除", "通过", screen_failure_records, "对应记录已从后续疗效分析排除"),
-        ("DM年龄缺失/范围外（含筛败）", "提示", int(dm["age_group"].isna().sum()), "DM全部受试者口径；不进入A/B/C分组"),
+        ("DM年龄缺失/范围外（含筛败）", "提示", int(dm["age_group"].isna().sum()), "DM全部试验参与者口径；不进入A/B/C分组"),
     ]
     validation = pd.DataFrame(checks, columns=["检查项", "状态", "数量", "说明"])
     if not duplicate.empty:
-        raise ValueError("发现同一受试者同一访视的重复记录，请先修正数据。")
+        raise ValueError("发现同一试验参与者同一访视的重复记录，请先修正数据。")
 
-    # 个体疗效分析以QS_YGTSS中出现过的受试者为范围；仅在DM中出现者不计为V5缺失。
+    # 个体疗效分析以QS_YGTSS中出现过的试验参与者为范围；仅在DM中出现者不计为V5缺失。
     v5 = build_v5_change(long)
     return AnalysisBundle(dm=dm, longitudinal=long, v5_change=v5, visit_tracking=visit_tracking, validation=validation, source_name=source_name)
 
@@ -163,16 +163,16 @@ def recruitment_summary(bundle: AnalysisBundle) -> dict[str, int]:
 
 def disposition_detail(bundle: AnalysisBundle) -> pd.DataFrame:
     detail = pd.DataFrame({
-        "受试者编号": [*MANUAL_SCREEN_FAILURE_IDS, *MANUAL_WITHDRAWAL_IDS],
+        "试验参与者编号": [*MANUAL_SCREEN_FAILURE_IDS, *MANUAL_WITHDRAWAL_IDS],
         "状态": ["筛选失败"] * len(MANUAL_SCREEN_FAILURE_IDS) + ["退出"] * len(MANUAL_WITHDRAWAL_IDS),
         "数据来源": ["人工补充"] * (len(MANUAL_SCREEN_FAILURE_IDS) + len(MANUAL_WITHDRAWAL_IDS)),
     })
     demographics = bundle.dm[["subject_id", "age", "age_group"]].rename(
-        columns={"subject_id": "受试者编号", "age": "年龄", "age_group": "年龄组"}
+        columns={"subject_id": "试验参与者编号", "age": "年龄", "age_group": "年龄组"}
     )
-    detail = detail.merge(demographics, on="受试者编号", how="left")
+    detail = detail.merge(demographics, on="试验参与者编号", how="left")
     detail["年龄组"] = detail["年龄组"].fillna("年龄未分组")
-    return detail[["受试者编号", "年龄", "年龄组", "状态", "数据来源"]]
+    return detail[["试验参与者编号", "年龄", "年龄组", "状态", "数据来源"]]
 
 
 FOLLOWUP_OFFSETS = {"V2": 14, "V3": 28, "V4": 42, "V5": 56, "V6": 84}
@@ -198,10 +198,10 @@ def followup_schedule(bundle: AnalysisBundle) -> pd.DataFrame:
         if status == "筛选失败":
             baseline_date = pd.NaT
         row = {
-            "受试者编号": subject_id,
+            "试验参与者编号": subject_id,
             "年龄": info.get("age", np.nan),
             "年龄组": info.get("age_group"),
-            "受试者状态": status,
+            "试验参与者状态": status,
             "知情日期": screening_date,
             "V1发药日期": baseline_date,
         }
@@ -241,10 +241,10 @@ def followup_calendar(bundle: AnalysisBundle, as_of: pd.Timestamp | None = None)
                 timing = "逾期未访"
                 days_from_plan = int((as_of - planned.normalize()).days)
             rows.append({
-                "受试者编号": person["受试者编号"],
+                "试验参与者编号": person["试验参与者编号"],
                 "年龄": person["年龄"],
                 "年龄组": person["年龄组"],
-                "受试者状态": person["受试者状态"],
+                "试验参与者状态": person["试验参与者状态"],
                 "访视": visit,
                 "访视时间": VISIT_LABELS[visit],
                 "理论日期": planned,
@@ -254,8 +254,8 @@ def followup_calendar(bundle: AnalysisBundle, as_of: pd.Timestamp | None = None)
                 "随访状态": timing,
                 "相差天数": days_from_plan,
             })
-    columns = ["受试者编号", "年龄", "年龄组", "受试者状态", "访视", "访视时间", "理论日期", "允许窗起", "允许窗止", "实际日期", "随访状态", "相差天数"]
-    return pd.DataFrame(rows, columns=columns).sort_values(["理论日期", "受试者编号"]).reset_index(drop=True)
+    columns = ["试验参与者编号", "年龄", "年龄组", "试验参与者状态", "访视", "访视时间", "理论日期", "允许窗起", "允许窗止", "实际日期", "随访状态", "相差天数"]
+    return pd.DataFrame(rows, columns=columns).sort_values(["理论日期", "试验参与者编号"]).reset_index(drop=True)
 
 
 def visit_completion_summary(bundle: AnalysisBundle) -> pd.DataFrame:

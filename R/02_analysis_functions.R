@@ -147,7 +147,7 @@ analyse_age_group <- function(data, group_code, group_label) {
 
   v5_export <- v5_change_by_subject %>%
     transmute(
-      受试者编号 = subject_id,
+      试验参与者编号 = subject_id,
       年龄 = age,
       年龄分组 = age_group,
       基线V1评分 = baseline_v1,
@@ -176,7 +176,7 @@ analyse_age_group <- function(data, group_code, group_label) {
     gss_30_50$individual
   ) %>%
     transmute(
-      受试者编号 = subject_id,
+      试验参与者编号 = subject_id,
       访视 = visit,
       研究周 = week,
       结局指标 = outcome,
@@ -212,4 +212,3 @@ analyse_age_group <- function(data, group_code, group_label) {
   saveRDS(result, file.path(output_dir, "分析结果.rds"))
   result
 }
-

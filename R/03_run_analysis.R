@@ -25,7 +25,7 @@ group_counts <- bind_rows(lapply(
   all_group_results,
   \(result) tibble(
     年龄分析组 = result$group_label,
-    YGTSS受试者数 = n_distinct(result$data$subject_id),
+    YGTSS试验参与者数 = n_distinct(result$data$subject_id),
     正式访视记录数 = nrow(result$data),
     V1和V5可评价人数 =
       sum(!is.na(result$v5_change_by_subject$responder_30pct)),
