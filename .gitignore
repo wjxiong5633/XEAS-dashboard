@@ -27,5 +27,5 @@ figures_tables/
 *.pptx
 *.ndjson
 
-# 仅允许用户确认可用于看板默认展示的 2026-08-26 去姓名数据快照
-!DATA/Excel_DATA-1.0-2026_08_26_09_49_19.xlsx
+# 仅允许看板必需字段构成的 2026-08-26 去标识化部署副本
+!DATA/XEAS_dashboard_default_2026-08-26.xlsx

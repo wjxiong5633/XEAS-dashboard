@@ -19,7 +19,7 @@ from analysis import (
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = APP_DIR.parent
-DEFAULT_FILE = PROJECT_DIR / "DATA" / "Excel_DATA-1.0-2026_08_26_09_49_19.xlsx"
+DEFAULT_FILE = PROJECT_DIR / "DATA" / "XEAS_dashboard_default_2026-08-26.xlsx"
 
 st.set_page_config(page_title="XEAS随访数据及主要疗效看板", page_icon="📊", layout="wide")
 st.markdown("""
