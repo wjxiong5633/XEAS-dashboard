@@ -12,7 +12,7 @@ __pycache__/
 **/.streamlit/secrets.toml
 
 # 原始受试者数据、中间数据和分析输出不进入代码仓库
-DATA/
+DATA/*
 intermediate/
 outputs/
 results/
@@ -26,3 +26,6 @@ figures_tables/
 *.RData
 *.pptx
 *.ndjson
+
+# 仅允许用户确认可用于看板默认展示的 2026-08-26 去姓名数据快照
+!DATA/Excel_DATA-1.0-2026_08_26_09_49_19.xlsx

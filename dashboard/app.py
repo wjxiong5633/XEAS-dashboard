@@ -12,7 +12,7 @@ import streamlit as st
 
 from analysis import (
     AGE_GROUPS, MANUAL_WITHDRAWAL_IDS, SCORES, VISITS, VISIT_LABELS, age_response_results,
-    completeness, disposition_detail, followup_schedule, load_and_analyse, response_by_visit, subset,
+    completeness, disposition_detail, followup_calendar, followup_schedule, load_and_analyse, response_by_visit, subset,
     recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
     visit_count_audit,
 )
@@ -207,7 +207,7 @@ with efficacy_overview_tab:
 with followup_tab:
     st.subheader("去标识化受试者随访表")
     st.caption("不显示姓名、门诊号和电话。理论访视日期以V1发药日期为起点计算，允许窗为±2天。")
-    followup_table_tab, visit_matrix_tab, visit_audit_tab = st.tabs(["随访总表", "访视完成矩阵", "访视人数核对"])
+    followup_table_tab, calendar_tab, visit_matrix_tab, visit_audit_tab = st.tabs(["随访总表", "随访日历", "访视完成矩阵", "访视人数核对"])
     with followup_table_tab:
         schedule = followup_schedule(bundle)
         schedule["年龄组"] = schedule["年龄组"].fillna("年龄未分组")
@@ -239,6 +239,60 @@ with followup_tab:
         st.caption(f"当前显示 {len(display_schedule)} 人。黄色=筛选失败，绿色=退出；筛选失败者不生成V1及后续访视计划。")
         with st.expander("查看访视时间计算规则"):
             st.markdown("V2：D14±2天　｜　V3：D28±2天　｜　V4：D42±2天　｜　V5：D56±2天　｜　V6：D84±2天")
+    with calendar_tab:
+        st.subheader("随访日历")
+        today = pd.Timestamp.today().normalize()
+        calendar = followup_calendar(bundle, today)
+        calendar["年龄组"] = calendar["年龄组"].fillna("年龄未分组")
+
+        active_calendar = calendar[~calendar["受试者状态"].isin(["退出", "筛选失败"])]
+        due_today = active_calendar[
+            active_calendar["实际日期"].isna()
+            & active_calendar["允许窗起"].le(today)
+            & active_calendar["允许窗止"].ge(today)
+        ]
+        next_seven = active_calendar[
+            active_calendar["实际日期"].isna()
+            & active_calendar["理论日期"].between(today, today + pd.Timedelta(days=7))
+        ]
+        overdue = active_calendar[active_calendar["随访状态"].eq("逾期未访")]
+        cal_metrics = st.columns(4)
+        cal_metrics[0].metric("今日日期", today.strftime("%Y-%m-%d"))
+        cal_metrics[1].metric("今日在访视窗", due_today["受试者编号"].nunique())
+        cal_metrics[2].metric("未来7天计划随访", len(next_seven))
+        cal_metrics[3].metric("逾期未访", len(overdue))
+
+        date_col1, date_col2, visit_col, person_status_col, cal_status_col = st.columns([1.1, 1.1, 1.2, 1.7, 2])
+        start_date = pd.Timestamp(date_col1.date_input("查看起始日期", value=today.date()))
+        end_date = pd.Timestamp(date_col2.date_input("查看结束日期", value=(today + pd.Timedelta(days=14)).date()))
+        selected_visits = visit_col.multiselect("访视", VISITS[1:], default=VISITS[1:])
+        person_status_options = [x for x in ["已入组", "完成试验", "退出", "数据待补充"] if x in set(calendar["受试者状态"])]
+        selected_person_status = person_status_col.multiselect("受试者状态", person_status_options, default=person_status_options)
+        status_options = ["待访", "访视窗内", "逾期未访", "窗内完成", "窗外完成"]
+        selected_cal_status = cal_status_col.multiselect("随访状态", status_options, default=status_options)
+        if end_date < start_date:
+            st.warning("结束日期不能早于起始日期。")
+            calendar_view = calendar.iloc[0:0]
+        else:
+            # 日期区间与允许访视窗有交集即显示，因此可查询某天“该访”的所有人。
+            calendar_view = calendar[
+                calendar["允许窗起"].le(end_date)
+                & calendar["允许窗止"].ge(start_date)
+                & calendar["访视"].isin(selected_visits)
+                & calendar["受试者状态"].isin(selected_person_status)
+                & calendar["随访状态"].isin(selected_cal_status)
+            ].copy()
+        cal_date_cols = ["理论日期", "允许窗起", "允许窗止", "实际日期"]
+        for col in cal_date_cols:
+            calendar_view[col] = pd.to_datetime(calendar_view[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+        styled_calendar = fmt_table(calendar_view).style.apply(
+            lambda row: (["background-color:#d9ead3"] * len(row) if row["受试者状态"] == "退出"
+                         else ["background-color:#fce8e6;color:#9b1c1c"] * len(row) if row["随访状态"] == "逾期未访"
+                         else ["background-color:#fff2cc"] * len(row) if row["随访状态"] == "访视窗内"
+                         else [""] * len(row)), axis=1
+        )
+        st.dataframe(styled_calendar, hide_index=True, use_container_width=True, height=590)
+        st.caption(f"当前显示 {len(calendar_view)} 条应访记录。查询日期与±2天访视窗有交集即显示；红色=逾期未访，黄色=当前在访视窗，绿色=已退出。顶部待访指标不计已退出者。")
     with visit_matrix_tab:
         st.subheader("疗效分析人群访视完成矩阵")
         st.caption("仅显示进入后续疗效分析的受试者；绿色表示该访视有YGTSS-TTS评分，黄色表示缺失。筛选失败者不在本矩阵中。")

@@ -215,6 +215,49 @@ def followup_schedule(bundle: AnalysisBundle) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def followup_calendar(bundle: AnalysisBundle, as_of: pd.Timestamp | None = None) -> pd.DataFrame:
+    """将宽格式随访计划转换为按访视排列的日历。"""
+    as_of = pd.Timestamp.today().normalize() if as_of is None else pd.Timestamp(as_of).normalize()
+    schedule = followup_schedule(bundle)
+    rows = []
+    for _, person in schedule.iterrows():
+        for visit in FOLLOWUP_OFFSETS:
+            planned = pd.to_datetime(person[f"{visit}理论日期"], errors="coerce")
+            if pd.isna(planned):
+                continue
+            lower = pd.to_datetime(person[f"{visit}下限"], errors="coerce")
+            upper = pd.to_datetime(person[f"{visit}上限"], errors="coerce")
+            actual = pd.to_datetime(person[f"{visit}实际日期"], errors="coerce")
+            if pd.notna(actual):
+                timing = "窗内完成" if lower <= actual <= upper else "窗外完成"
+                days_from_plan = int((actual.normalize() - planned.normalize()).days)
+            elif as_of < lower:
+                timing = "待访"
+                days_from_plan = int((planned.normalize() - as_of).days)
+            elif as_of <= upper:
+                timing = "访视窗内"
+                days_from_plan = int((planned.normalize() - as_of).days)
+            else:
+                timing = "逾期未访"
+                days_from_plan = int((as_of - planned.normalize()).days)
+            rows.append({
+                "受试者编号": person["受试者编号"],
+                "年龄": person["年龄"],
+                "年龄组": person["年龄组"],
+                "受试者状态": person["受试者状态"],
+                "访视": visit,
+                "访视时间": VISIT_LABELS[visit],
+                "理论日期": planned,
+                "允许窗起": lower,
+                "允许窗止": upper,
+                "实际日期": actual,
+                "随访状态": timing,
+                "相差天数": days_from_plan,
+            })
+    columns = ["受试者编号", "年龄", "年龄组", "受试者状态", "访视", "访视时间", "理论日期", "允许窗起", "允许窗止", "实际日期", "随访状态", "相差天数"]
+    return pd.DataFrame(rows, columns=columns).sort_values(["理论日期", "受试者编号"]).reset_index(drop=True)
+
+
 def visit_completion_summary(bundle: AnalysisBundle) -> pd.DataFrame:
     visit_order = ["SCR", *VISITS]
     if bundle.visit_tracking.empty:
