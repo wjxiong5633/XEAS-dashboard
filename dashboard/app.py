@@ -12,10 +12,12 @@ import streamlit as st
 
 from analysis import (
     AGE_GROUPS, MANUAL_WITHDRAWAL_IDS, SCORES, VISITS, VISIT_LABELS, age_response_results,
-    completeness, disposition_detail, followup_calendar, followup_schedule, load_and_analyse, response_by_visit, subset,
+    completeness, disposition_detail, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
+    followup_schedule, load_and_analyse, response_by_visit, subset,
     recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
-    visit_count_audit,
+    visit_completion_from_schedule, visit_count_audit, visit_count_audit_from_schedule,
 )
+from qqdoc_followup import REQUIRED_SECRETS, sync_followup
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = APP_DIR.parent
@@ -33,6 +35,11 @@ h1,h2,h3{color:#17365d}.small-note{color:#64748b;font-size:.88rem}.status-ok{col
 @st.cache_data(show_spinner=False)
 def analyse_bytes(payload: bytes, name: str):
     return load_and_analyse(payload, name)
+
+
+@st.cache_data(ttl=300, show_spinner="正在从腾讯文档同步最新随访数据……")
+def load_qqdoc_followup(config_items: tuple[tuple[str, str], ...]):
+    return sync_followup(dict(config_items))
 
 
 def fmt_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -135,10 +142,37 @@ except Exception as exc:
     st.error(f"数据读取失败：{exc}")
     st.stop()
 
+try:
+    secret_values = {key: str(st.secrets.get(key, "")).strip() for key in REQUIRED_SECRETS}
+except (FileNotFoundError, KeyError):
+    secret_values = {key: "" for key in REQUIRED_SECRETS}
+
+qqdoc_ready = all(secret_values.values())
+qqdoc_error = None
+if qqdoc_ready:
+    try:
+        qqdoc_schedule, qqdoc_synced_at = load_qqdoc_followup(tuple(sorted(secret_values.items())))
+        followup_data_source = "腾讯文档实时随访表"
+    except Exception as exc:
+        qqdoc_error = str(exc)
+        qqdoc_schedule = followup_schedule(bundle)
+        qqdoc_synced_at = None
+        followup_data_source = "EDC的SV工作表（腾讯同步失败，已回退）"
+else:
+    qqdoc_schedule = followup_schedule(bundle)
+    qqdoc_synced_at = None
+    followup_data_source = "EDC的SV工作表（未配置腾讯文档）"
+
 group = st.sidebar.selectbox("分析人群", ["总体", *AGE_GROUPS])
 metric_label = st.sidebar.selectbox("评分指标", list(SCORES))
 metric = SCORES[metric_label]
 st.sidebar.caption(source_note)
+st.sidebar.caption(f"随访数据：{followup_data_source}")
+if qqdoc_synced_at:
+    st.sidebar.caption(f"腾讯文档同步：{qqdoc_synced_at:%Y-%m-%d %H:%M:%S}")
+    if st.sidebar.button("立即刷新腾讯随访数据", use_container_width=True):
+        load_qqdoc_followup.clear()
+        st.rerun()
 st.sidebar.caption(f"页面计算时间：{datetime.now():%Y-%m-%d %H:%M}")
 
 data = subset(bundle, group)
@@ -170,7 +204,7 @@ with project_tab:
         st.dataframe(fmt_table(disposition_detail(bundle)), hide_index=True, use_container_width=True)
 
     st.subheader("各访视完成情况")
-    visit_counts = visit_completion_summary(bundle)
+    visit_counts = visit_completion_from_schedule(qqdoc_schedule)
     visit_left, visit_right = st.columns([2.2, 1])
     with visit_left:
         visit_fig = px.bar(
@@ -182,7 +216,7 @@ with project_tab:
         st.plotly_chart(visit_fig, use_container_width=True)
     with visit_right:
         st.dataframe(visit_counts, hide_index=True, use_container_width=True, height=315)
-        st.caption("按SV工作表中“是否进行本次访视=是”的唯一试验参与者计数；V1及后续访视排除已确认的筛选失败者。")
+        st.caption(f"数据来源：{followup_data_source}。按实际访视日期计数；V1及后续访视排除已确认的筛选失败者。")
 
 with efficacy_overview_tab:
     st.subheader("主要疗效概览")
@@ -206,14 +240,21 @@ with efficacy_overview_tab:
 
 with followup_tab:
     st.subheader("去标识化试验参与者随访表")
-    st.caption("不显示姓名、门诊号和电话。理论访视日期以V1发药日期为起点计算，允许窗为±2天。")
+    source_status = f"数据来源：{followup_data_source}"
+    if qqdoc_synced_at:
+        source_status += f"；最近同步于 {qqdoc_synced_at:%Y-%m-%d %H:%M:%S}，每5分钟自动更新"
+    st.caption(f"{source_status}。不读取或显示姓名、门诊号和电话；理论访视日期以V1发药日期为起点计算，允许窗为±2天。")
+    if qqdoc_error:
+        st.warning(f"腾讯文档同步暂时不可用，当前已回退到EDC的SV数据：{qqdoc_error}")
+    elif not qqdoc_ready:
+        st.info("尚未配置腾讯文档密钥，当前暂用EDC的SV数据。")
     followup_table_tab, calendar_tab, visit_matrix_tab, visit_audit_tab = st.tabs(["随访总表", "随访日历", "访视完成矩阵", "访视人数核对"])
     with followup_table_tab:
-        schedule = followup_schedule(bundle)
+        schedule = qqdoc_schedule.copy()
         schedule["年龄组"] = schedule["年龄组"].fillna("年龄未分组")
         filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1.1, 1.8, 1.8, 1.5])
         subject_search = filter_col1.text_input("搜索试验参与者编号", placeholder="例如 S01014")
-        available_statuses = [x for x in ["已入组", "完成试验", "退出", "筛选失败", "数据待补充"] if x in set(schedule["试验参与者状态"])]
+        available_statuses = [x for x in ["筛选中", "已入组", "完成试验", "退出", "筛选失败", "数据待补充"] if x in set(schedule["试验参与者状态"])]
         selected_statuses = filter_col2.multiselect("试验参与者状态", available_statuses, default=available_statuses)
         available_age_groups = [*AGE_GROUPS, "年龄未分组"]
         selected_age_groups = filter_col3.multiselect("年龄组", available_age_groups, default=available_age_groups)
@@ -242,7 +283,7 @@ with followup_tab:
     with calendar_tab:
         st.subheader("随访日历")
         today = pd.Timestamp.today().normalize()
-        calendar = followup_calendar(bundle, today)
+        calendar = followup_calendar_from_schedule(qqdoc_schedule, today)
         calendar["年龄组"] = calendar["年龄组"].fillna("年龄未分组")
 
         active_calendar = calendar[~calendar["试验参与者状态"].isin(["退出", "筛选失败"])]
@@ -294,9 +335,9 @@ with followup_tab:
         st.dataframe(styled_calendar, hide_index=True, use_container_width=True, height=590)
         st.caption(f"当前显示 {len(calendar_view)} 条应访记录。查询日期与±2天访视窗有交集即显示；红色=逾期未访，黄色=当前在访视窗，绿色=已退出。顶部待访指标不计已退出者。")
     with visit_matrix_tab:
-        st.subheader("疗效分析人群访视完成矩阵")
-        st.caption("仅显示进入后续疗效分析的试验参与者；绿色表示该访视有YGTSS-TTS评分，黄色表示缺失。筛选失败者不在本矩阵中。")
-        comp = completeness(bundle)
+        st.subheader("腾讯随访表访视完成矩阵")
+        st.caption("绿色表示腾讯随访表已有实际访视日期，黄色表示尚无记录；筛选失败者不在本矩阵中。该矩阵反映随访管理进度，不等同于EDC评分录入完整性。")
+        comp = followup_completion_matrix(qqdoc_schedule)
         styled = comp.style.map(
             lambda x: "background-color:#d9ead3;color:#176b2c" if x is True
             else "background-color:#fff2cc;color:#9c6500" if x is False else "",
@@ -304,13 +345,13 @@ with followup_tab:
         )
         st.dataframe(styled, use_container_width=True, height=680, hide_index=True)
     with visit_audit_tab:
-        audit = visit_count_audit(bundle)
+        audit = visit_count_audit_from_schedule(qqdoc_schedule)
         v1_audit = audit[audit["访视"].eq("V1")].iloc[0]
         audit_cols = st.columns(3)
-        audit_cols[0].metric("V1-D1原始SV完成数", int(v1_audit["SV原始完成数"]))
+        audit_cols[0].metric("V1-D1腾讯表完成数", int(v1_audit["腾讯表原始完成数"]))
         audit_cols[1].metric("排除筛败后V1人数", int(v1_audit["排除筛败后人数"]))
         audit_cols[2].metric("V1排除人数", int(v1_audit["排除人数"]))
-        st.info("V1-D1原始记录为60人；其中S01025在SV中被记录为已进行V1，但已人工确认为筛选失败，因此管理口径排除1人，最终为59人。")
+        st.info(f"腾讯随访表当前V1-D1有{int(v1_audit['腾讯表原始完成数'])}人记录；排除已确认的筛选失败者后，管理口径为{int(v1_audit['排除筛败后人数'])}人。人数会随在线表格更新。")
         st.dataframe(audit, hide_index=True, use_container_width=True)
 
 with overall_tab:
@@ -434,7 +475,7 @@ with export_tab:
         response_by_visit(data,"ygtss_tts",[50]).to_excel(writer,sheet_name="TTS降低50%",index=False)
         response_by_visit(data,"global_severity_score",[30,50]).to_excel(writer,sheet_name="GSS降低30和50%",index=False)
         bundle.v5_change.to_excel(writer,sheet_name="V1V5个体明细",index=False)
-        followup_schedule(bundle).to_excel(writer,sheet_name="随访日期表",index=False)
+        qqdoc_schedule.to_excel(writer,sheet_name="随访日期表",index=False)
         disposition_detail(bundle).to_excel(writer,sheet_name="筛败及退出名单",index=False)
     st.download_button("下载当前分析Excel",output.getvalue(),file_name=f"YGTSS初步分析_{datetime.now():%Y%m%d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
     st.download_button("下载清理后纵向数据CSV",bundle.longitudinal.to_csv(index=False).encode("utf-8-sig"),file_name="YGTSS清理后纵向数据.csv",mime="text/csv",use_container_width=True)

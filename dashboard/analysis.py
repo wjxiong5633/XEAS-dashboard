@@ -217,8 +217,12 @@ def followup_schedule(bundle: AnalysisBundle) -> pd.DataFrame:
 
 def followup_calendar(bundle: AnalysisBundle, as_of: pd.Timestamp | None = None) -> pd.DataFrame:
     """将宽格式随访计划转换为按访视排列的日历。"""
+    return followup_calendar_from_schedule(followup_schedule(bundle), as_of)
+
+
+def followup_calendar_from_schedule(schedule: pd.DataFrame, as_of: pd.Timestamp | None = None) -> pd.DataFrame:
+    """将任意标准随访宽表转换为按访视排列的日历。"""
     as_of = pd.Timestamp.today().normalize() if as_of is None else pd.Timestamp(as_of).normalize()
-    schedule = followup_schedule(bundle)
     rows = []
     for _, person in schedule.iterrows():
         for visit in FOLLOWUP_OFFSETS:
@@ -256,6 +260,44 @@ def followup_calendar(bundle: AnalysisBundle, as_of: pd.Timestamp | None = None)
             })
     columns = ["试验参与者编号", "年龄", "年龄组", "试验参与者状态", "访视", "访视时间", "理论日期", "允许窗起", "允许窗止", "实际日期", "随访状态", "相差天数"]
     return pd.DataFrame(rows, columns=columns).sort_values(["理论日期", "试验参与者编号"]).reset_index(drop=True)
+
+
+def visit_completion_from_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
+    """按去标识化随访宽表统计各访视实际完成人数。"""
+    visits = ["SCR", *VISITS]
+    date_columns = {"SCR": "知情日期", "V1": "V1发药日期", **{v: f"{v}实际日期" for v in VISITS[1:]}}
+    labels = {"SCR": "筛选期", **VISIT_LABELS}
+    rows = []
+    for visit in visits:
+        data = schedule
+        if visit != "SCR":
+            data = data[~data["试验参与者状态"].eq("筛选失败")]
+        rows.append([visit, labels[visit], int(pd.to_datetime(data[date_columns[visit]], errors="coerce").notna().sum())])
+    return pd.DataFrame(rows, columns=["访视", "访视时间", "完成访视人数"])
+
+
+def visit_count_audit_from_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
+    """同时展示腾讯随访表原始人数与排除筛选失败后的管理口径。"""
+    visits = ["SCR", *VISITS]
+    date_columns = {"SCR": "知情日期", "V1": "V1发药日期", **{v: f"{v}实际日期" for v in VISITS[1:]}}
+    labels = {"SCR": "筛选期", **VISIT_LABELS}
+    rows = []
+    for visit in visits:
+        completed = pd.to_datetime(schedule[date_columns[visit]], errors="coerce").notna()
+        raw = int(completed.sum())
+        managed = raw if visit == "SCR" else int((completed & ~schedule["试验参与者状态"].eq("筛选失败")).sum())
+        rows.append([visit, labels[visit], raw, managed, raw - managed])
+    return pd.DataFrame(rows, columns=["访视", "访视时间", "腾讯表原始完成数", "排除筛败后人数", "排除人数"])
+
+
+def followup_completion_matrix(schedule: pd.DataFrame) -> pd.DataFrame:
+    """腾讯随访表实际日期完成矩阵，不含筛选失败者。"""
+    data = schedule[~schedule["试验参与者状态"].eq("筛选失败")].copy()
+    result = data[["试验参与者编号", "年龄组", "试验参与者状态"]].copy()
+    date_columns = {"V1": "V1发药日期", **{v: f"{v}实际日期" for v in VISITS[1:]}}
+    for visit, column in date_columns.items():
+        result[visit] = pd.to_datetime(data[column], errors="coerce").notna().to_numpy()
+    return result
 
 
 def visit_completion_summary(bundle: AnalysisBundle) -> pd.DataFrame:

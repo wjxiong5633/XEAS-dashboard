@@ -10,6 +10,8 @@ __pycache__/
 !.env.example
 .streamlit/secrets.toml
 **/.streamlit/secrets.toml
+dashboard/secrets.toml
+dashboard/.cache/
 
 # 原始受试者数据、中间数据和分析输出不进入代码仓库
 DATA/*
