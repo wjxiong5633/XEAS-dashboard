@@ -29,7 +29,7 @@ SCORES = {
     "YGTSS总分（GSS）": "global_severity_score",
 }
 MANUAL_SCREEN_FAILURE_IDS = ["S01003", "S01011", "S01025", "S01053", "S01058", "S01066"]
-MANUAL_WITHDRAWAL_IDS = ["S01014", "S01017", "S01026", "S01035", "S01039", "S01045", "S01074"]
+MANUAL_WITHDRAWAL_IDS = ["S01014", "S01017", "S01026", "S01035", "S01039", "S01045", "S01062", "S01074"]
 
 
 @dataclass
@@ -274,6 +274,30 @@ def visit_completion_from_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
             data = data[~data["试验参与者状态"].eq("筛选失败")]
         rows.append([visit, labels[visit], int(pd.to_datetime(data[date_columns[visit]], errors="coerce").notna().sum())])
     return pd.DataFrame(rows, columns=["访视", "访视时间", "完成访视人数"])
+
+
+def recruitment_from_schedule(schedule: pd.DataFrame) -> dict[str, int]:
+    """按随访宽表状态统计项目进展，供腾讯文档和EDC回退数据共同使用。"""
+    statuses = schedule["试验参与者状态"].fillna("数据待补充").astype(str)
+    return {
+        "已筛选": int(schedule["试验参与者编号"].nunique()),
+        "已入组": int(statuses.isin(["已入组", "完成试验", "退出"]).sum()),
+        "筛选失败": int(statuses.eq("筛选失败").sum()),
+        "筛选中": int(statuses.eq("筛选中").sum()),
+        "已退出": int(statuses.eq("退出").sum()),
+        "已完成试验": int(statuses.eq("完成试验").sum()),
+    }
+
+
+def disposition_from_schedule(schedule: pd.DataFrame, source: str) -> pd.DataFrame:
+    """从随访宽表提取筛败和退出名单，不依赖EDC人口学工作表。"""
+    detail = schedule[schedule["试验参与者状态"].isin(["筛选失败", "退出"])][
+        ["试验参与者编号", "年龄", "年龄组", "试验参与者状态"]
+    ].copy()
+    detail = detail.rename(columns={"试验参与者状态": "状态"})
+    detail["年龄组"] = detail["年龄组"].fillna("年龄未分组")
+    detail["数据来源"] = source
+    return detail[["试验参与者编号", "年龄", "年龄组", "状态", "数据来源"]].sort_values(["状态", "试验参与者编号"])
 
 
 def visit_count_audit_from_schedule(schedule: pd.DataFrame) -> pd.DataFrame:

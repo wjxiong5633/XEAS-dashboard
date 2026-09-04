@@ -12,9 +12,9 @@ import streamlit as st
 
 from analysis import (
     AGE_GROUPS, MANUAL_WITHDRAWAL_IDS, SCORES, VISITS, VISIT_LABELS, age_response_results,
-    completeness, disposition_detail, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
+    completeness, disposition_detail, disposition_from_schedule, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
     followup_schedule, load_and_analyse, response_by_visit, subset,
-    recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
+    recruitment_from_schedule, recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
     visit_completion_from_schedule, visit_count_audit, visit_count_audit_from_schedule,
 )
 from qqdoc_followup import REQUIRED_SECRETS, sync_followup
@@ -184,14 +184,15 @@ missing_v5 = int(v5_all["week8_v5"].isna().sum())
 nonresponders = int((v5_all["responder_30pct"] == False).sum())
 
 st.title("XEAS随访数据及主要疗效看板")
-st.markdown(f'<div class="small-note">数据来源：{source_note} ｜ 当前人群：{group}</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="small-note">疗效数据：{source_note} ｜ 随访数据：{followup_data_source} ｜ 当前疗效分析人群：{group}</div>', unsafe_allow_html=True)
 
 project_tab, followup_tab, efficacy_tab, quality_tab, export_tab = st.tabs(["项目概览", "随访管理", "疗效分析", "数据质量", "结果导出"])
 with efficacy_tab:
     efficacy_overview_tab, overall_tab, age_tab, individual_tab = st.tabs(["疗效概览", "总体趋势", "年龄亚组", "个体分析"])
 
 with project_tab:
-    recruitment = recruitment_summary(bundle)
+    recruitment = recruitment_from_schedule(qqdoc_schedule)
+    disposition = disposition_from_schedule(qqdoc_schedule, followup_data_source)
     st.subheader("试验参与者进展")
     progress_cols = st.columns(5)
     progress_cols[0].metric("已筛选", recruitment["已筛选"])
@@ -199,9 +200,9 @@ with project_tab:
     progress_cols[2].metric("筛选失败", recruitment["筛选失败"])
     progress_cols[3].metric("筛选中", recruitment["筛选中"])
     progress_cols[4].metric("已退出", recruitment["已退出"])
-    st.caption(f"当前已完成试验 {recruitment['已完成试验']} 人；“已入组”口径包含已完成试验和退出者。筛选失败及退出名单采用人工补充口径。")
+    st.caption(f"数据来源：{followup_data_source}。当前已完成试验 {recruitment['已完成试验']} 人；“已入组”口径包含当前已入组、已完成试验和退出者。")
     with st.expander("查看筛选失败及退出试验参与者名单"):
-        st.dataframe(fmt_table(disposition_detail(bundle)), hide_index=True, use_container_width=True)
+        st.dataframe(fmt_table(disposition), hide_index=True, use_container_width=True)
 
     st.subheader("各访视完成情况")
     visit_counts = visit_completion_from_schedule(qqdoc_schedule)
@@ -476,6 +477,6 @@ with export_tab:
         response_by_visit(data,"global_severity_score",[30,50]).to_excel(writer,sheet_name="GSS降低30和50%",index=False)
         bundle.v5_change.to_excel(writer,sheet_name="V1V5个体明细",index=False)
         qqdoc_schedule.to_excel(writer,sheet_name="随访日期表",index=False)
-        disposition_detail(bundle).to_excel(writer,sheet_name="筛败及退出名单",index=False)
+        disposition.to_excel(writer,sheet_name="筛败及退出名单",index=False)
     st.download_button("下载当前分析Excel",output.getvalue(),file_name=f"YGTSS初步分析_{datetime.now():%Y%m%d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
     st.download_button("下载清理后纵向数据CSV",bundle.longitudinal.to_csv(index=False).encode("utf-8-sig"),file_name="YGTSS清理后纵向数据.csv",mime="text/csv",use_container_width=True)

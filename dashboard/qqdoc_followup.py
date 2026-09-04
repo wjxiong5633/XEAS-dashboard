@@ -19,7 +19,7 @@ import requests
 API_ROOT = "https://docs.qq.com/openapi"
 FOLLOWUP_OFFSETS = {"V2": 14, "V3": 28, "V4": 42, "V5": 56, "V6": 84}
 SCREEN_FAILURE_IDS = {"S01003", "S01011", "S01025", "S01053", "S01058", "S01066"}
-WITHDRAWAL_IDS = {"S01014", "S01017", "S01026", "S01035", "S01039", "S01045", "S01074"}
+WITHDRAWAL_IDS = {"S01014", "S01017", "S01026", "S01035", "S01039", "S01045", "S01062", "S01074"}
 REQUIRED_SECRETS = ("QQDOC_CLIENT_ID", "QQDOC_ACCESS_TOKEN", "QQDOC_OPEN_ID", "QQDOC_FILE_ID")
 
 
@@ -172,9 +172,10 @@ def parse_followup_schedule(payload: bytes) -> pd.DataFrame:
         age = _age(row.get("E"))
         screening_date = _date(row.get("G"))
         baseline_date = _date(row.get("I"))
-        failure_text = " ".join(str(row.get(col, "")) for col in ("F", "H", "I", "Z", "AE"))
-        is_failure = subject_id in SCREEN_FAILURE_IDS or bool(re.search(r"筛败|筛选失败|不愿.*参加|不参与", failure_text))
-        is_withdrawn = subject_id in WITHDRAWAL_IDS
+        # 状态文字可能写在“提前退出”、某次实际访视日期或备注格中；只用于状态判定，不进入输出。
+        status_text = " ".join(str(row.get(col, "")) for col in row if col not in {"B", "C", "D"})
+        is_failure = subject_id in SCREEN_FAILURE_IDS or bool(re.search(r"筛败|筛选失败|不愿.*参加|不参与", status_text))
+        is_withdrawn = subject_id in WITHDRAWAL_IDS or bool(re.search(r"提前退出|退出试验|退出研究|脱落", status_text))
         actuals = {visit: _date(row.get(column)) for visit, column in actual_columns.items()}
         if is_failure:
             status, baseline_date = "筛选失败", pd.NaT
