@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import calendar as calendar_lib
+import html
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -47,6 +49,72 @@ def fmt_table(df: pd.DataFrame) -> pd.DataFrame:
     numeric = out.select_dtypes(include="number").columns
     out[numeric] = out[numeric].round(2)
     return out
+
+
+def visit_display_status(row: pd.Series, visit: str, today: pd.Timestamp) -> str:
+    """Return the compact visit status used by the follow-up master table."""
+    actual = pd.to_datetime(row.get(f"{visit}实际日期"), errors="coerce")
+    planned = pd.to_datetime(row.get(f"{visit}理论日期"), errors="coerce")
+    lower = pd.to_datetime(row.get(f"{visit}下限"), errors="coerce")
+    upper = pd.to_datetime(row.get(f"{visit}上限"), errors="coerce")
+    if pd.notna(actual):
+        return "已完成（超窗）" if pd.notna(lower) and pd.notna(upper) and not lower <= actual <= upper else "已完成"
+    if pd.isna(planned):
+        return ""
+    if pd.notna(upper) and upper < today:
+        return "逾期未访"
+    return "待访视"
+
+
+def render_month_calendar(month_schedule: pd.DataFrame, month_start: pd.Timestamp) -> None:
+    """Render a compact CMP-style monthly visit calendar."""
+    by_date = {day.date(): group for day, group in month_schedule.groupby("理论日期")}
+    weeks = calendar_lib.Calendar(firstweekday=0).monthdatescalendar(month_start.year, month_start.month)
+    cells: list[str] = []
+    for week in weeks:
+        for day in week:
+            if day.month != month_start.month:
+                cells.append('<div class="visit-cal-cell visit-cal-muted"></div>')
+                continue
+            day_frame = by_date.get(day)
+            if day_frame is None:
+                cells.append(f'<div class="visit-cal-cell"><div class="visit-cal-day">{day.day}</div><div class="visit-cal-empty">无安排</div></div>')
+                continue
+            counts = day_frame["访视"].value_counts()
+            badges = "".join(
+                f'<span class="visit-cal-badge">{html.escape(str(name))} {int(count)}</span>'
+                for name, count in counts.items()
+            )
+            risk_count = int(day_frame["随访状态"].isin(["逾期未访", "窗外完成"]).sum())
+            risks = f'<div class="visit-cal-risk">⚠ 逾期/超窗 {risk_count}</div>' if risk_count else ""
+            subjects = "".join(
+                '<div class="visit-cal-subject">'
+                f'<span>{html.escape(str(row["试验参与者编号"]))}</span><em>{html.escape(str(row["访视"]))}</em></div>'
+                for _, row in day_frame.sort_values(["试验参与者编号", "访视"]).iterrows()
+            )
+            cells.append(
+                '<div class="visit-cal-cell">'
+                f'<div class="visit-cal-day">{day.day}<span>{len(day_frame)}次</span></div>'
+                f'<div class="visit-cal-badges">{badges}</div><div class="visit-cal-subjects">{subjects}</div>{risks}</div>'
+            )
+    st.markdown(
+        """
+        <style>
+        .visit-cal-weekdays,.visit-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+        .visit-cal-weekdays div{padding:6px;text-align:center;color:#657080;font-size:.84rem;font-weight:600}
+        .visit-cal-grid{margin-bottom:14px}.visit-cal-cell{min-height:120px;padding:9px;border:1px solid #dfe5ec;border-radius:10px;background:#fff}
+        .visit-cal-muted{background:#f7f8fa;border-color:#eef0f3}.visit-cal-day{font-weight:700;color:#273241;margin-bottom:8px;display:flex;justify-content:space-between}
+        .visit-cal-day span{font-size:.74rem;color:#697586;font-weight:500}.visit-cal-badges{display:flex;flex-wrap:wrap;gap:4px}
+        .visit-cal-badge{font-size:.72rem;background:#e8f1fb;color:#235b8e;border-radius:999px;padding:2px 6px}
+        .visit-cal-subjects{display:flex;flex-direction:column;gap:3px;margin-top:7px}.visit-cal-subject{display:flex;justify-content:space-between;gap:5px;padding:3px 5px;border-radius:5px;background:#f3f6f9;font-size:.7rem}
+        .visit-cal-subject span{color:#273241;font-weight:600;overflow-wrap:anywhere}.visit-cal-subject em{color:#697586;font-style:normal;white-space:nowrap}
+        .visit-cal-risk{font-size:.72rem;color:#a43b32;background:#fdecea;border-radius:6px;padding:3px 5px;margin-top:6px}.visit-cal-empty{font-size:.74rem;color:#a0a7b0;margin-top:28px;text-align:center}
+        @media(max-width:900px){.visit-cal-cell{min-height:92px;padding:5px}.visit-cal-subjects{display:none}.visit-cal-badge{font-size:.65rem}}
+        </style>
+        <div class="visit-cal-weekdays"><div>周一</div><div>周二</div><div>周三</div><div>周四</div><div>周五</div><div>周六</div><div>周日</div></div>
+        <div class="visit-cal-grid">%s</div>
+        """ % "".join(cells), unsafe_allow_html=True,
+    )
 
 
 def line_chart(data: pd.DataFrame, score_col: str, title: str):
@@ -251,6 +319,7 @@ with followup_tab:
         st.info("尚未配置腾讯文档密钥，当前暂用EDC的SV数据。")
     followup_table_tab, calendar_tab, visit_matrix_tab, visit_audit_tab = st.tabs(["随访总表", "随访日历", "访视完成矩阵", "访视人数核对"])
     with followup_table_tab:
+        today = pd.Timestamp.today().normalize()
         schedule = qqdoc_schedule.copy()
         schedule["年龄组"] = schedule["年龄组"].fillna("年龄未分组")
         filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1.1, 1.8, 1.8, 1.5])
@@ -267,74 +336,109 @@ with followup_tab:
             visit = visit_filter[:2]
             target_col = "V1发药日期" if visit == "V1" else f"{visit}实际日期"
             schedule = schedule[schedule[target_col].isna()]
+        for visit in VISITS[1:]:
+            schedule[f"{visit}访视状态"] = schedule.apply(
+                lambda row, name=visit: visit_display_status(row, name, today), axis=1
+            )
+        screen_failed = schedule["试验参与者状态"].eq("筛选失败")
+        schedule.loc[screen_failed, [f"{v}访视状态" for v in VISITS[1:]]] = ""
+        schedule["是否存在超窗"] = schedule[[f"{v}访视状态" for v in VISITS[1:]]].eq("已完成（超窗）").any(axis=1)
         date_columns = [c for c in schedule.columns if "日期" in c or c.endswith("下限") or c.endswith("上限")]
         display_schedule = schedule.copy()
         for col in date_columns:
             display_schedule[col] = pd.to_datetime(display_schedule[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
         display_schedule = fmt_table(display_schedule)
-        styled_schedule = display_schedule.style.apply(
-            lambda row: (["background-color:#fff2cc"] * len(row) if row["试验参与者状态"] == "筛选失败"
-                         else ["background-color:#d9ead3"] * len(row) if row["试验参与者状态"] == "退出"
-                         else [""] * len(row)), axis=1
+        def followup_row_style(row: pd.Series) -> list[str]:
+            if row["是否存在超窗"]:
+                style = "background-color:#fde2e2;color:#8b1e1e"
+            elif row["试验参与者状态"] == "筛选失败":
+                style = "background-color:#fff2cc;color:#7f6000"
+            elif row["试验参与者状态"] == "退出":
+                style = "background-color:#d9ead3;color:#176b2c"
+            elif row["试验参与者状态"] == "完成试验":
+                style = "background-color:#d9eaf7;color:#174a6e"
+            else:
+                style = ""
+            return [style] * len(row)
+        styled_schedule = display_schedule.style.apply(followup_row_style, axis=1).hide(
+            axis="columns", subset=["是否存在超窗"]
         )
         st.dataframe(styled_schedule, hide_index=True, use_container_width=True, height=590)
-        st.caption(f"当前显示 {len(display_schedule)} 人。黄色=筛选失败，绿色=退出；筛选失败者不生成V1及后续访视计划。")
+        enrolled_count = int(display_schedule["试验参与者状态"].isin(["已入组", "完成试验", "退出"]).sum())
+        st.caption(
+            f"本表经页内筛选后：筛选 {len(display_schedule)} 人，入组 {enrolled_count} 人，"
+            f"筛败 {int(screen_failed.sum())} 人。黄色=筛选失败，绿色=退出，蓝色=完成试验，红色=存在超窗。"
+        )
         with st.expander("查看访视时间计算规则"):
             st.markdown("V2：D14±2天　｜　V3：D28±2天　｜　V4：D42±2天　｜　V5：D56±2天　｜　V6：D84±2天")
     with calendar_tab:
         st.subheader("随访日历")
+        st.caption("月历按理论访视日期排布；可切换日期矩阵和完整明细，查看窗口、实际日期及逾期/超窗情况。")
         today = pd.Timestamp.today().normalize()
         calendar = followup_calendar_from_schedule(qqdoc_schedule, today)
         calendar["年龄组"] = calendar["年龄组"].fillna("年龄未分组")
-
-        active_calendar = calendar[~calendar["试验参与者状态"].isin(["退出", "筛选失败"])]
-        due_today = active_calendar[
-            active_calendar["实际日期"].isna()
-            & active_calendar["允许窗起"].le(today)
-            & active_calendar["允许窗止"].ge(today)
-        ]
-        next_seven = active_calendar[
-            active_calendar["实际日期"].isna()
-            & active_calendar["理论日期"].between(today, today + pd.Timedelta(days=7))
-        ]
-        overdue = active_calendar[active_calendar["随访状态"].eq("逾期未访")]
-        cal_metrics = st.columns(4)
-        cal_metrics[0].metric("今日日期", today.strftime("%Y-%m-%d"))
-        cal_metrics[1].metric("今日在访视窗", due_today["试验参与者编号"].nunique())
-        cal_metrics[2].metric("未来7天计划随访", len(next_seven))
-        cal_metrics[3].metric("逾期未访", len(overdue))
-
-        date_col1, date_col2, visit_col, person_status_col, cal_status_col = st.columns([1.1, 1.1, 1.2, 1.7, 2])
-        start_date = pd.Timestamp(date_col1.date_input("查看起始日期", value=today.date()))
-        end_date = pd.Timestamp(date_col2.date_input("查看结束日期", value=(today + pd.Timedelta(days=14)).date()))
-        selected_visits = visit_col.multiselect("访视", VISITS[1:], default=VISITS[1:])
-        person_status_options = [x for x in ["已入组", "完成试验", "退出", "数据待补充"] if x in set(calendar["试验参与者状态"])]
-        selected_person_status = person_status_col.multiselect("试验参与者状态", person_status_options, default=person_status_options)
-        status_options = ["待访", "访视窗内", "逾期未访", "窗内完成", "窗外完成"]
-        selected_cal_status = cal_status_col.multiselect("随访状态", status_options, default=status_options)
-        if end_date < start_date:
-            st.warning("结束日期不能早于起始日期。")
-            calendar_view = calendar.iloc[0:0]
+        calendar = calendar[~calendar["试验参与者状态"].isin(["退出", "筛选失败"])].copy()
+        if calendar.empty:
+            st.info("当前没有可展示的理论访视安排。")
         else:
-            # 日期区间与允许访视窗有交集即显示，因此可查询某天“该访”的所有人。
-            calendar_view = calendar[
-                calendar["允许窗起"].le(end_date)
-                & calendar["允许窗止"].ge(start_date)
-                & calendar["访视"].isin(selected_visits)
-                & calendar["试验参与者状态"].isin(selected_person_status)
-                & calendar["随访状态"].isin(selected_cal_status)
+            controls = st.columns([1.1, 1.3, 1.8, 2])
+            months = sorted(calendar["理论日期"].dropna().dt.strftime("%Y-%m").unique().tolist())
+            current_month = today.strftime("%Y-%m")
+            month = controls[0].selectbox("选择月份", months, index=months.index(current_month) if current_month in months else 0,
+                                          format_func=lambda value: f"{int(value[:4])}年{int(value[5:])}月")
+            selected_visits = controls[1].multiselect("访视节点", VISITS[1:], default=VISITS[1:])
+            person_options = [x for x in ["已入组", "完成试验", "数据待补充"] if x in set(calendar["试验参与者状态"])]
+            selected_people = controls[2].multiselect("试验参与者状态", person_options, default=person_options)
+            status_options = [x for x in ["待访", "访视窗内", "窗内完成", "窗外完成", "逾期未访"] if x in set(calendar["随访状态"])]
+            selected_statuses = controls[3].multiselect("随访状态", status_options, default=status_options)
+            filtered_calendar = calendar[
+                calendar["访视"].isin(selected_visits)
+                & calendar["试验参与者状态"].isin(selected_people)
+                & calendar["随访状态"].isin(selected_statuses)
             ].copy()
-        cal_date_cols = ["理论日期", "允许窗起", "允许窗止", "实际日期"]
-        for col in cal_date_cols:
-            calendar_view[col] = pd.to_datetime(calendar_view[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
-        styled_calendar = fmt_table(calendar_view).style.apply(
-            lambda row: (["background-color:#d9ead3"] * len(row) if row["试验参与者状态"] == "退出"
-                         else ["background-color:#fce8e6;color:#9b1c1c"] * len(row) if row["随访状态"] == "逾期未访"
-                         else ["background-color:#fff2cc"] * len(row) if row["随访状态"] == "访视窗内"
-                         else [""] * len(row)), axis=1
-        )
-        st.dataframe(styled_calendar, hide_index=True, use_container_width=True, height=590)
-        st.caption(f"当前显示 {len(calendar_view)} 条应访记录。查询日期与±2天访视窗有交集即显示；红色=逾期未访，黄色=当前在访视窗，绿色=已退出。顶部待访指标不计已退出者。")
+            month_start = pd.Timestamp(f"{month}-01")
+            month_end = month_start + pd.offsets.MonthEnd(1)
+            month_schedule = filtered_calendar[filtered_calendar["理论日期"].between(month_start, month_end)].copy()
+            view_mode = st.radio("展示方式", ["📅 月历概览", "📊 日期 × 访视", "📋 完整随访明细"], horizontal=True, label_visibility="collapsed")
+            if view_mode == "📅 月历概览":
+                metrics = st.columns(4)
+                metrics[0].metric("当月应访", f"{len(month_schedule)} 次")
+                metrics[1].metric("窗内完成", int(month_schedule["随访状态"].eq("窗内完成").sum()))
+                metrics[2].metric("窗外完成", int(month_schedule["随访状态"].eq("窗外完成").sum()))
+                metrics[3].metric("逾期未访", int(month_schedule["随访状态"].eq("逾期未访").sum()))
+                if month_schedule.empty:
+                    st.info(f"{month_start:%Y年%m月}在当前筛选条件下没有访视安排。")
+                else:
+                    render_month_calendar(month_schedule, month_start)
+                    available_dates = sorted(month_schedule["理论日期"].dt.date.unique())
+                    selected_date = st.selectbox("查看当日明细", available_dates, format_func=lambda value: value.strftime("%Y-%m-%d"))
+                    day_detail = month_schedule[month_schedule["理论日期"].dt.date.eq(selected_date)].copy()
+                    st.dataframe(fmt_table(day_detail), hide_index=True, use_container_width=True, height=min(420, 85 + len(day_detail) * 36))
+            elif view_mode == "📊 日期 × 访视":
+                if month_schedule.empty:
+                    st.info(f"{month_start:%Y年%m月}在当前筛选条件下没有访视安排。")
+                else:
+                    matrix = pd.pivot_table(month_schedule, index="访视", columns=month_schedule["理论日期"].dt.strftime("%m-%d"),
+                                            values="试验参与者编号", aggfunc="count", fill_value=0)
+                    matrix["总计"] = matrix.sum(axis=1)
+                    matrix.loc["所有访视总计"] = matrix.sum(axis=0)
+                    st.caption("数字为当日理论应访次数；一名试验参与者的一个访视节点计 1 次。")
+                    st.dataframe(matrix, use_container_width=True, height=min(560, 110 + len(matrix) * 36))
+            else:
+                search = st.text_input("搜索试验参与者编号", placeholder="例如 S01014", key="calendar_subject_search")
+                detail = filtered_calendar.copy()
+                if search.strip():
+                    detail = detail[detail["试验参与者编号"].str.contains(search.strip(), case=False, na=False)]
+                for col in ["理论日期", "允许窗起", "允许窗止", "实际日期"]:
+                    detail[col] = pd.to_datetime(detail[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+                styled_detail = fmt_table(detail).style.apply(
+                    lambda row: (["background-color:#fce8e6;color:#9b1c1c"] * len(row) if row["随访状态"] in ["逾期未访", "窗外完成"]
+                                 else ["background-color:#fff2cc;color:#7f6000"] * len(row) if row["随访状态"] == "访视窗内"
+                                 else ["background-color:#d9eaf7;color:#174a6e"] * len(row) if row["随访状态"] == "窗内完成"
+                                 else [""] * len(row)), axis=1
+                )
+                st.dataframe(styled_detail, hide_index=True, use_container_width=True, height=590)
+                st.caption(f"当前显示 {len(detail)} 条。红色=逾期或超窗，黄色=当前在访视窗，蓝色=窗内完成。")
     with visit_matrix_tab:
         st.subheader("腾讯随访表访视完成矩阵")
         st.caption("绿色表示腾讯随访表已有实际访视日期，黄色表示尚无记录；筛选失败者不在本矩阵中。该矩阵反映随访管理进度，不等同于EDC评分录入完整性。")
