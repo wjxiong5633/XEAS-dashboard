@@ -91,6 +91,14 @@ def load_and_analyse(source: str | Path | BinaryIO | bytes, source_name: str = "
         "birth_date": dm_raw.iloc[:, 10],
         "age": pd.to_numeric(dm_raw.iloc[:, 11], errors="coerce"),
     }).dropna(subset=["subject_id"]).drop_duplicates("subject_id")
+    if "RASTR" in book.sheet_names:
+        rastr_raw = pd.read_excel(book, sheet_name="RASTR", skiprows=1)
+        if rastr_raw.shape[1] >= 10:
+            random_age = pd.Series(
+                pd.to_numeric(rastr_raw.iloc[:, 9], errors="coerce").to_numpy(),
+                index=rastr_raw.iloc[:, 2].astype("string").str.strip(),
+            ).dropna()
+            dm["age"] = dm["age"].fillna(dm["subject_id"].map(random_age))
     dm["age_group"] = dm["age"].map(_age_group)
     dm["age_group_status"] = dm["age"].map(_age_status)
 
@@ -175,7 +183,9 @@ def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> A
     visit_tracking = pd.concat([bundle.visit_tracking for bundle in bundles], ignore_index=True)
     visit_tracking = visit_tracking.drop_duplicates().sort_values(["subject_id", "visit", "visit_date"], na_position="last").reset_index(drop=True)
 
-    v5_change = build_v5_change(longitudinal, dm)
+    # Keep the efficacy population tied to participants who actually appear in
+    # QS_YGTSS; DM-only screening records do not belong in individual charts.
+    v5_change = build_v5_change(longitudinal)
     validation = pd.DataFrame([
         ("数据版本", "通过", len(bundles), "已同时纳入1.0旧库和V2.0新库" if len(bundles) == 2 else "当前仅有一个CRF版本"),
         ("DM工作表", "通过", len(dm), "合并后试验参与者数"),
@@ -190,6 +200,47 @@ def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> A
         visit_tracking=visit_tracking,
         validation=validation,
         source_name=source_name,
+    )
+
+
+def backfill_bundle_ages(bundle: AnalysisBundle, schedule: pd.DataFrame) -> AnalysisBundle:
+    """Fill missing EDC ages from the de-identified Tencent follow-up schedule."""
+    required = {"试验参与者编号", "年龄"}
+    if schedule.empty or not required.issubset(schedule.columns):
+        return bundle
+    age_lookup = (
+        schedule[["试验参与者编号", "年龄"]]
+        .assign(年龄=lambda frame: pd.to_numeric(frame["年龄"], errors="coerce"))
+        .dropna(subset=["试验参与者编号", "年龄"])
+        .drop_duplicates("试验参与者编号", keep="last")
+        .set_index("试验参与者编号")["年龄"]
+    )
+    if age_lookup.empty:
+        return bundle
+
+    dm = bundle.dm.copy()
+    dm["age"] = dm["age"].fillna(dm["subject_id"].map(age_lookup))
+    dm["age_group"] = dm["age"].map(_age_group)
+    dm["age_group_status"] = dm["age"].map(_age_status)
+    demographics = dm.set_index("subject_id")
+
+    longitudinal = bundle.longitudinal.copy()
+    longitudinal["age"] = longitudinal["subject_id"].map(demographics["age"])
+    longitudinal["age_group"] = longitudinal["subject_id"].map(demographics["age_group"])
+    longitudinal["age_group_status"] = longitudinal["subject_id"].map(demographics["age_group_status"])
+    v5_change = build_v5_change(longitudinal)
+
+    validation = bundle.validation.copy()
+    mask = validation["检查项"].eq("DM年龄缺失/范围外（含筛败）")
+    validation.loc[mask, "数量"] = int(dm["age_group"].isna().sum())
+    validation.loc[mask, "说明"] = "已按DM、RASTR、腾讯随访表依次补充；仍缺失者不进入A/B/C分组"
+    return AnalysisBundle(
+        dm=dm,
+        longitudinal=longitudinal,
+        v5_change=v5_change,
+        visit_tracking=bundle.visit_tracking.copy(),
+        validation=validation,
+        source_name=bundle.source_name,
     )
 
 

@@ -16,7 +16,7 @@ import streamlit as st
 
 from analysis import (
     AGE_GROUPS, MANUAL_WITHDRAWAL_IDS, SCORES, VISITS, VISIT_LABELS, age_response_results,
-    completeness, disposition_detail, disposition_from_schedule, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
+    backfill_bundle_ages, completeness, disposition_detail, disposition_from_schedule, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
     detect_crf_version, followup_schedule, load_and_analyse, merge_analysis_bundles, response_by_visit, subset,
     recruitment_from_schedule, recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
     visit_completion_from_schedule, visit_count_audit, visit_count_audit_from_schedule,
@@ -292,6 +292,10 @@ else:
     qqdoc_schedule = followup_schedule(bundle)
     qqdoc_synced_at = None
     followup_data_source = "EDC的SV工作表（未配置腾讯文档）"
+
+# Efficacy analysis keeps EDC age when present and only fills missing values
+# from the de-identified follow-up schedule (which may come from Tencent Docs).
+bundle = backfill_bundle_ages(bundle, qqdoc_schedule)
 
 group = st.sidebar.selectbox("分析人群", ["总体", *AGE_GROUPS])
 metric_label = st.sidebar.selectbox("评分指标", list(SCORES))
@@ -627,7 +631,7 @@ with quality_tab:
     m2.metric("V1和V5均缺失", int(((bundle.v5_change["baseline_v1"].isna()) & (bundle.v5_change["week8_v5"].isna())).sum()))
     m3.metric("DM年龄缺失/范围外（含筛败）", int(bundle.dm["age_group"].isna().sum()))
     m4.metric("疗效分析人群年龄未分组", int(bundle.v5_change["age_group"].isna().sum()))
-    st.caption("DM口径包含全部已记录试验参与者，因此包括年龄缺失的筛选失败者S01053；疗效分析口径已排除筛败者。")
+    st.caption("年龄优先采用EDC的DM字段，缺失时依次用RASTR随机年龄和腾讯随访表年龄补充；疗效分析口径已排除筛败者。")
     st.subheader("缺少V5名单")
     st.dataframe(fmt_table(bundle.v5_change[bundle.v5_change["week8_v5"].isna()]),hide_index=True,use_container_width=True)
     st.subheader("可评价但未达到30%名单")
