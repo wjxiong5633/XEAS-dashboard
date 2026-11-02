@@ -40,6 +40,13 @@ class AnalysisBundle:
     visit_tracking: pd.DataFrame
     validation: pd.DataFrame
     source_name: str
+    adverse_events: pd.DataFrame
+    randomization: pd.DataFrame
+    first_dose: pd.DataFrame
+    drug_dispensing: pd.DataFrame
+    drug_returns: pd.DataFrame
+    adherence: pd.DataFrame
+    concomitant_medications: pd.DataFrame
 
 
 def _age_group(age: float | None) -> str | None:
@@ -68,6 +75,17 @@ def _read_excel(source: str | Path | BinaryIO | bytes) -> pd.ExcelFile:
     if isinstance(source, bytes):
         source = BytesIO(source)
     return pd.ExcelFile(source)
+
+
+def _optional_records(book: pd.ExcelFile, sheet_name: str, columns: dict[str, str]) -> pd.DataFrame:
+    """Read optional EDC records while dropping the first Chinese-label row."""
+    if sheet_name not in book.sheet_names:
+        return pd.DataFrame(columns=list(columns.values()))
+    raw = pd.read_excel(book, sheet_name=sheet_name).iloc[1:].copy()
+    for column in columns:
+        if column not in raw:
+            raw[column] = pd.NA
+    return raw[list(columns)].rename(columns=columns).reset_index(drop=True)
 
 
 def load_and_analyse(source: str | Path | BinaryIO | bytes, source_name: str = "上传数据") -> AnalysisBundle:
@@ -146,7 +164,51 @@ def load_and_analyse(source: str | Path | BinaryIO | bytes, source_name: str = "
 
     # 个体疗效分析以QS_YGTSS中出现过的试验参与者为范围；仅在DM中出现者不计为V5缺失。
     v5 = build_v5_change(long)
-    return AnalysisBundle(dm=dm, longitudinal=long, v5_change=v5, visit_tracking=visit_tracking, validation=validation, source_name=source_name)
+    adverse_events = _optional_records(book, "AE", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "AETERM": "不良事件名称", "AESTDAT": "开始日期",
+        "AEONGO": "是否持续", "AEENDAT": "结束日期", "AETOXGR": "严重程度",
+        "AEREL": "与研究药物关系", "AEACN": "对研究药物措施", "AEACNOTH": "AE处理措施",
+        "AEOUT": "转归", "AESER": "是否严重不良事件", "AESI": "是否因AE退出",
+    }).dropna(subset=["不良事件名称"])
+    randomization = _optional_records(book, "RAND", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "DSYN": "是否完成随机", "RANDDAT": "随机时间", "RANDID": "随机号",
+    })
+    randomization = randomization[randomization["是否完成随机"].eq("是")].copy()
+    first_dose = _optional_records(book, "EX_FIRST", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "SOTPERF": "是否首次用药", "SOTDAT": "首次用药日期",
+    })
+    first_dose = first_dose[first_dose["是否首次用药"].eq("是")].copy()
+    drug_dispensing = _optional_records(book, "DA_DEL", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "VISIT_OID": "访视", "DA1PERF": "是否发药",
+        "DA1DAT": "发药日期", "DA11NUM": "A药发药数量", "DA12NUM": "B药发药数量", "DRUGID": "药物编号",
+    })
+    drug_dispensing = drug_dispensing[drug_dispensing["是否发药"].eq("是")].copy()
+    drug_returns = _optional_records(book, "DA_RET", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "VISIT_OID": "访视", "DA2PERF": "是否回收",
+        "DA2DAT": "回收日期", "DA21NUM": "A药回收数量", "DA22NUM": "B药回收数量",
+        "DA31NUM": "A药实际用药数量", "DA32NUM": "B药实际用药数量",
+    })
+    drug_returns = drug_returns[drug_returns["是否回收"].eq("是")].copy()
+    adherence = _optional_records(book, "EX_ADH", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "EX3PERF": "是否采集依从性",
+        "EX31DOSE": "A药实际服用总量", "EX32DOSE": "B药实际服用总量",
+        "EX31PLAN": "A药计划服用总量", "EX32PLAN": "B药计划服用总量", "EX3ADH": "依从性百分比",
+    })
+    adherence = adherence[adherence["是否采集依从性"].eq("是")].copy()
+    concomitant_medications = _optional_records(book, "CM", {
+        "SUBJECT_UNIQUE_OID": "试验参与者编号", "CMTRT": "药物名称", "CM1OCC": "首次给药前开始",
+        "CMSTDAT": "开始日期", "CMONGO": "是否持续", "CMENDAT": "结束日期", "CMDOSE": "单次剂量",
+        "CMDOSU": "剂量单位", "CMDOSFRQ": "给药频率", "CMDOSFRM": "剂型", "CMROUT": "给药途径",
+        "CMINDC": "用药原因",
+    }).dropna(subset=["药物名称"])
+    for frame in [adverse_events, randomization, first_dose, drug_dispensing, drug_returns, adherence, concomitant_medications]:
+        frame["数据文件"] = source_name
+    return AnalysisBundle(
+        dm=dm, longitudinal=long, v5_change=v5, visit_tracking=visit_tracking,
+        validation=validation, source_name=source_name, adverse_events=adverse_events,
+        randomization=randomization, first_dose=first_dose, drug_dispensing=drug_dispensing,
+        drug_returns=drug_returns, adherence=adherence, concomitant_medications=concomitant_medications,
+    )
 
 
 def detect_crf_version(source: str | Path | BinaryIO | bytes) -> str:
@@ -193,6 +255,9 @@ def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> A
         ("跨库重复ID-访视", "通过", 0, "新旧库合并主键无重复"),
         ("DM年龄缺失/范围外（含筛败）", "提示", int(dm["age_group"].isna().sum()), "DM全部试验参与者口径；不进入A/B/C分组"),
     ], columns=["检查项", "状态", "数量", "说明"])
+    def combined_records(field: str) -> pd.DataFrame:
+        return pd.concat([getattr(bundle, field) for bundle in bundles], ignore_index=True).drop_duplicates().reset_index(drop=True)
+
     return AnalysisBundle(
         dm=dm,
         longitudinal=longitudinal,
@@ -200,6 +265,13 @@ def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> A
         visit_tracking=visit_tracking,
         validation=validation,
         source_name=source_name,
+        adverse_events=combined_records("adverse_events"),
+        randomization=combined_records("randomization"),
+        first_dose=combined_records("first_dose"),
+        drug_dispensing=combined_records("drug_dispensing"),
+        drug_returns=combined_records("drug_returns"),
+        adherence=combined_records("adherence"),
+        concomitant_medications=combined_records("concomitant_medications"),
     )
 
 
@@ -241,6 +313,13 @@ def backfill_bundle_ages(bundle: AnalysisBundle, schedule: pd.DataFrame) -> Anal
         visit_tracking=bundle.visit_tracking.copy(),
         validation=validation,
         source_name=bundle.source_name,
+        adverse_events=bundle.adverse_events.copy(),
+        randomization=bundle.randomization.copy(),
+        first_dose=bundle.first_dose.copy(),
+        drug_dispensing=bundle.drug_dispensing.copy(),
+        drug_returns=bundle.drug_returns.copy(),
+        adherence=bundle.adherence.copy(),
+        concomitant_medications=bundle.concomitant_medications.copy(),
     )
 
 

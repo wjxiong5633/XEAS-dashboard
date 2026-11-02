@@ -16,8 +16,9 @@ import streamlit as st
 
 from analysis import (
     AGE_GROUPS, MANUAL_WITHDRAWAL_IDS, SCORES, VISITS, VISIT_LABELS, age_response_results,
-    backfill_bundle_ages, completeness, disposition_detail, disposition_from_schedule, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
-    detect_crf_version, followup_schedule, load_and_analyse, merge_analysis_bundles, response_by_visit, subset,
+    backfill_bundle_ages, completeness, detect_crf_version, disposition_detail, disposition_from_schedule,
+    followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
+    followup_schedule, load_and_analyse, merge_analysis_bundles, response_by_visit, subset,
     recruitment_from_schedule, recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
     visit_completion_from_schedule, visit_count_audit, visit_count_audit_from_schedule,
 )
@@ -31,7 +32,12 @@ st.set_page_config(page_title="XEAS随访数据及主要疗效看板", page_icon
 st.markdown("""
 <style>
 .block-container{padding-top:1.4rem;padding-bottom:2rem}.stMetric{background:#f4f7fa;border:1px solid #dce4ec;padding:14px 16px;border-radius:6px}
-h1,h2,h3{color:#17365d}.small-note{color:#64748b;font-size:.88rem}.status-ok{color:#137333;font-weight:600}.status-warn{color:#a15c00;font-weight:600}
+h1,h2,h3{color:#17365d}.small-note{color:#64748b;font-size:1rem;line-height:1.65}.status-ok{color:#137333;font-weight:600}.status-warn{color:#a15c00;font-weight:600}
+[data-testid="stAppViewContainer"] .stMarkdown p,[data-testid="stAppViewContainer"] .stMarkdown li{font-size:1.06rem;line-height:1.7}
+[data-testid="stCaptionContainer"] p{font-size:.96rem!important;line-height:1.55!important}
+[data-testid="stWidgetLabel"] p{font-size:1rem!important;font-weight:600}
+[data-testid="stMetricLabel"] p{font-size:1rem!important}[data-testid="stMetricValue"]{font-size:2rem!important}
+.stTabs [data-baseweb="tab"]{font-size:1rem!important;padding-left:16px;padding-right:16px}
 </style>
 """, unsafe_allow_html=True)
 
@@ -209,9 +215,7 @@ def individual_chart(person: pd.DataFrame, outcome: pd.Series, chart_type: str):
 
 st.sidebar.title("数据与筛选")
 uploaded_files = st.sidebar.file_uploader(
-    "上传新旧库Excel",
-    type=["xlsx", "xls"],
-    accept_multiple_files=True,
+    "上传新旧库Excel", type=["xlsx", "xls"], accept_multiple_files=True,
     help="可上传1.0旧库、V2.0新库中的任意一个或同时上传两个。新文件会替换对应版本，并更新本网页服务的共享缓存。",
 )
 try:
@@ -220,13 +224,10 @@ try:
         if "1.0" not in store["sources"] and DEFAULT_FILE.exists():
             default_payload = DEFAULT_FILE.read_bytes()
             store["sources"]["1.0"] = {
-                "name": DEFAULT_FILE.name,
-                "payload": default_payload,
+                "name": DEFAULT_FILE.name, "payload": default_payload,
                 "digest": hashlib.sha256(default_payload).hexdigest(),
-                "updated_at": datetime.fromtimestamp(DEFAULT_FILE.stat().st_mtime),
-                "origin": "内置默认数据",
+                "updated_at": datetime.fromtimestamp(DEFAULT_FILE.stat().st_mtime), "origin": "内置默认数据",
             }
-
     processed_hashes = st.session_state.setdefault("processed_edc_upload_hashes", set())
     updated_versions: list[str] = []
     for uploaded in uploaded_files:
@@ -235,25 +236,18 @@ try:
         if digest in processed_hashes:
             continue
         version = detect_crf_version(payload)
-        # Validate before replacing the shared version, so a bad upload cannot poison other sessions.
         analyse_bytes(payload, uploaded.name)
         with store["lock"]:
             store["sources"][version] = {
-                "name": uploaded.name,
-                "payload": payload,
-                "digest": digest,
-                "updated_at": datetime.now(),
-                "origin": "网页上传",
+                "name": uploaded.name, "payload": payload, "digest": digest,
+                "updated_at": datetime.now(), "origin": "网页上传",
             }
         processed_hashes.add(digest)
         updated_versions.append(version)
     if updated_versions:
         st.sidebar.success(f"已更新共享缓存：{'、'.join(updated_versions)}")
-
     with store["lock"]:
-        source_snapshot = {
-            version: dict(item) for version, item in store["sources"].items()
-        }
+        source_snapshot = {version: dict(item) for version, item in store["sources"].items()}
     if not source_snapshot:
         st.title("XEAS随访数据及主要疗效看板")
         st.info("请在左侧上传包含 DM、QS_YGTSS 和 SV 工作表的新库或旧库 Excel 文件。")
@@ -293,8 +287,6 @@ else:
     qqdoc_synced_at = None
     followup_data_source = "EDC的SV工作表（未配置腾讯文档）"
 
-# Efficacy analysis keeps EDC age when present and only fills missing values
-# from the de-identified follow-up schedule (which may come from Tencent Docs).
 bundle = backfill_bundle_ages(bundle, qqdoc_schedule)
 
 group = st.sidebar.selectbox("分析人群", ["总体", *AGE_GROUPS])
@@ -320,7 +312,7 @@ nonresponders = int((v5_all["responder_30pct"] == False).sum())
 st.title("XEAS随访数据及主要疗效看板")
 st.markdown(f'<div class="small-note">疗效数据：{source_note} ｜ 随访数据：{followup_data_source} ｜ 当前疗效分析人群：{group}</div>', unsafe_allow_html=True)
 
-project_tab, followup_tab, efficacy_tab, quality_tab, export_tab = st.tabs(["项目概览", "随访管理", "疗效分析", "数据质量", "结果导出"])
+project_tab, followup_tab, efficacy_tab, safety_tab, quality_tab, export_tab = st.tabs(["项目概览", "随访管理", "疗效分析", "安全性与用药", "数据质量", "结果导出"])
 with efficacy_tab:
     efficacy_overview_tab, overall_tab, age_tab, individual_tab = st.tabs(["疗效概览", "总体趋势", "年龄亚组", "个体分析"])
 
@@ -623,6 +615,95 @@ with individual_tab:
     if not ungrouped.empty:
         st.caption(f"另有{len(ungrouped)}名试验参与者因年龄缺失或超出分组范围，未进入A/B/C个体图。")
 
+with safety_tab:
+    st.subheader("安全性与研究用药")
+    st.caption("数据来自EDC的新旧库合并结果。仅展示去标识化编号和结构化字段，不展示自由文本备注。")
+    ae_tab, drug_tab, conmed_tab = st.tabs(["不良事件", "研究药物", "合并用药"])
+
+    with ae_tab:
+        ae = bundle.adverse_events.copy()
+        if ae.empty:
+            st.info("当前EDC中没有已填写的不良事件记录。")
+        else:
+            ae_metrics = st.columns(5)
+            ae_metrics[0].metric("发生AE人数", ae["试验参与者编号"].nunique())
+            ae_metrics[1].metric("AE事件数", len(ae))
+            ae_metrics[2].metric("严重不良事件", int(ae["是否严重不良事件"].eq("是").sum()))
+            ae_metrics[3].metric("仍在持续", int(ae["是否持续"].eq("是").sum()))
+            related = ~ae["与研究药物关系"].fillna("").isin(["", "无关", "可能无关"])
+            ae_metrics[4].metric("可能相关及以上", int(related.sum()))
+            ae_left, ae_right = st.columns([1.25, 1])
+            with ae_left:
+                ae_counts = ae["不良事件名称"].value_counts().rename_axis("不良事件").reset_index(name="事件数")
+                ae_fig = px.bar(ae_counts, x="事件数", y="不良事件", orientation="h", text="事件数", color_discrete_sequence=["#d97b5b"])
+                ae_fig.update_layout(title="不良事件构成", height=max(320, 55 * len(ae_counts)), yaxis_title=None, xaxis_title="事件数", showlegend=False)
+                st.plotly_chart(ae_fig, use_container_width=True)
+            with ae_right:
+                severity = ae["严重程度"].fillna("未填写").value_counts().rename_axis("严重程度").reset_index(name="事件数")
+                st.markdown("#### 严重程度")
+                st.dataframe(severity, hide_index=True, use_container_width=True, height=250)
+                st.caption("“可能相关及以上”不包含记录为“无关”或“可能无关”的事件。")
+            ae_display = ae.copy()
+            for column in ["开始日期", "结束日期"]:
+                ae_display[column] = pd.to_datetime(ae_display[column], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+            st.markdown("#### AE明细")
+            st.dataframe(ae_display.drop(columns=["数据文件"]), hide_index=True, use_container_width=True, height=440)
+
+    with drug_tab:
+        randomized = bundle.randomization.copy()
+        first_dose = bundle.first_dose.copy()
+        dispensing = bundle.drug_dispensing.copy()
+        returns = bundle.drug_returns.copy()
+        adherence = bundle.adherence.copy()
+        drug_metrics = st.columns(5)
+        drug_metrics[0].metric("已随机人数", randomized["试验参与者编号"].nunique())
+        drug_metrics[1].metric("首次用药人数", first_dose["试验参与者编号"].nunique())
+        drug_metrics[2].metric("已有发药记录人数", dispensing["试验参与者编号"].nunique())
+        drug_metrics[3].metric("已有回收记录人数", returns["试验参与者编号"].nunique())
+        drug_metrics[4].metric("依从性已采集", adherence["试验参与者编号"].nunique())
+        drug_left, drug_right = st.columns(2)
+        with drug_left:
+            issue_counts = dispensing["访视"].value_counts().reindex(VISITS, fill_value=0).rename_axis("访视").reset_index(name="发药记录数")
+            issue_fig = px.bar(issue_counts, x="访视", y="发药记录数", text="发药记录数", color_discrete_sequence=["#3f78a8"])
+            issue_fig.update_layout(title="各访视发药记录", height=360, showlegend=False)
+            st.plotly_chart(issue_fig, use_container_width=True)
+        with drug_right:
+            return_counts = returns["访视"].value_counts().reindex(VISITS, fill_value=0).rename_axis("访视").reset_index(name="回收记录数")
+            return_fig = px.bar(return_counts, x="访视", y="回收记录数", text="回收记录数", color_discrete_sequence=["#4b8b65"])
+            return_fig.update_layout(title="各访视回收记录", height=360, showlegend=False)
+            st.plotly_chart(return_fig, use_container_width=True)
+        st.caption("依从性表目前仅少量参与者完成采集，且依从性百分比字段尚未填写，因此仅报告采集人数，不计算总体依从率。")
+        issue_detail_tab, return_detail_tab, adherence_detail_tab = st.tabs(["发药明细", "回收明细", "依从性采集"])
+        with issue_detail_tab:
+            issue_display = dispensing.drop(columns=["数据文件"]).copy()
+            issue_display["发药日期"] = pd.to_datetime(issue_display["发药日期"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+            st.dataframe(issue_display, hide_index=True, use_container_width=True, height=470)
+        with return_detail_tab:
+            return_display = returns.drop(columns=["数据文件"]).copy()
+            return_display["回收日期"] = pd.to_datetime(return_display["回收日期"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+            st.dataframe(return_display, hide_index=True, use_container_width=True, height=470)
+        with adherence_detail_tab:
+            st.dataframe(adherence.drop(columns=["数据文件"]), hide_index=True, use_container_width=True, height=360)
+
+    with conmed_tab:
+        conmed = bundle.concomitant_medications.copy()
+        if conmed.empty:
+            st.info("当前EDC中没有已填写的既往或合并用药记录。")
+        else:
+            cm_metrics = st.columns(4)
+            cm_metrics[0].metric("合并用药人数", conmed["试验参与者编号"].nunique())
+            cm_metrics[1].metric("用药记录数", len(conmed))
+            cm_metrics[2].metric("仍在持续", int(conmed["是否持续"].eq("是").sum()))
+            cm_metrics[3].metric("因AE用药", int(conmed["用药原因"].astype("string").str.contains("不良事件", na=False).sum()))
+            cm_counts = conmed["药物名称"].value_counts().rename_axis("药物名称").reset_index(name="记录数")
+            cm_fig = px.bar(cm_counts, x="记录数", y="药物名称", orientation="h", text="记录数", color_discrete_sequence=["#7b6aa7"])
+            cm_fig.update_layout(title="合并用药构成", height=max(330, 48 * len(cm_counts)), yaxis_title=None, xaxis_title="记录数", showlegend=False)
+            st.plotly_chart(cm_fig, use_container_width=True)
+            cm_display = conmed.drop(columns=["数据文件"]).copy()
+            for column in ["开始日期", "结束日期"]:
+                cm_display[column] = pd.to_datetime(cm_display[column], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+            st.dataframe(cm_display, hide_index=True, use_container_width=True, height=470)
+
 with quality_tab:
     st.subheader("上传数据检查")
     st.dataframe(bundle.validation, hide_index=True, use_container_width=True)
@@ -648,5 +729,10 @@ with export_tab:
         bundle.v5_change.to_excel(writer,sheet_name="V1V5个体明细",index=False)
         qqdoc_schedule.to_excel(writer,sheet_name="随访日期表",index=False)
         disposition.to_excel(writer,sheet_name="筛败及退出名单",index=False)
+        bundle.adverse_events.to_excel(writer,sheet_name="不良事件",index=False)
+        bundle.drug_dispensing.to_excel(writer,sheet_name="研究药物发放",index=False)
+        bundle.drug_returns.to_excel(writer,sheet_name="研究药物回收",index=False)
+        bundle.adherence.to_excel(writer,sheet_name="用药依从性",index=False)
+        bundle.concomitant_medications.to_excel(writer,sheet_name="合并用药",index=False)
     st.download_button("下载当前分析Excel",output.getvalue(),file_name=f"YGTSS初步分析_{datetime.now():%Y%m%d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
     st.download_button("下载清理后纵向数据CSV",bundle.longitudinal.to_csv(index=False).encode("utf-8-sig"),file_name="YGTSS清理后纵向数据.csv",mime="text/csv",use_container_width=True)
