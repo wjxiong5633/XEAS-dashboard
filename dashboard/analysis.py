@@ -49,6 +49,33 @@ class AnalysisBundle:
     concomitant_medications: pd.DataFrame
 
 
+OPTIONAL_RECORD_FIELDS = (
+    "adverse_events",
+    "randomization",
+    "first_dose",
+    "drug_dispensing",
+    "drug_returns",
+    "adherence",
+    "concomitant_medications",
+)
+
+
+def ensure_bundle_schema(bundle: AnalysisBundle) -> AnalysisBundle:
+    """Upgrade cached bundles created before optional EDC domains were added."""
+    return AnalysisBundle(
+        dm=bundle.dm.copy(),
+        longitudinal=bundle.longitudinal.copy(),
+        v5_change=bundle.v5_change.copy(),
+        visit_tracking=bundle.visit_tracking.copy(),
+        validation=bundle.validation.copy(),
+        source_name=bundle.source_name,
+        **{
+            field: getattr(bundle, field, pd.DataFrame()).copy()
+            for field in OPTIONAL_RECORD_FIELDS
+        },
+    )
+
+
 def _age_group(age: float | None) -> str | None:
     if pd.isna(age):
         return None
@@ -231,6 +258,7 @@ def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> A
     """Combine old/new CRF libraries into one analysis population."""
     if not bundles:
         raise ValueError("没有可分析的数据文件。")
+    bundles = [ensure_bundle_schema(bundle) for bundle in bundles]
 
     dm = pd.concat([bundle.dm for bundle in bundles], ignore_index=True)
     dm = dm.drop_duplicates("subject_id", keep="last").sort_values("subject_id").reset_index(drop=True)
@@ -277,6 +305,7 @@ def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> A
 
 def backfill_bundle_ages(bundle: AnalysisBundle, schedule: pd.DataFrame) -> AnalysisBundle:
     """Fill missing EDC ages from the de-identified Tencent follow-up schedule."""
+    bundle = ensure_bundle_schema(bundle)
     required = {"试验参与者编号", "年龄"}
     if schedule.empty or not required.issubset(schedule.columns):
         return bundle
