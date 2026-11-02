@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import calendar as calendar_lib
+import hashlib
 import html
+import threading
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +17,7 @@ import streamlit as st
 from analysis import (
     AGE_GROUPS, MANUAL_WITHDRAWAL_IDS, SCORES, VISITS, VISIT_LABELS, age_response_results,
     completeness, disposition_detail, disposition_from_schedule, followup_calendar, followup_calendar_from_schedule, followup_completion_matrix,
-    followup_schedule, load_and_analyse, response_by_visit, subset,
+    detect_crf_version, followup_schedule, load_and_analyse, merge_analysis_bundles, response_by_visit, subset,
     recruitment_from_schedule, recruitment_summary, visit_completion_summary, v5_response_summary, visit_summary,
     visit_completion_from_schedule, visit_count_audit, visit_count_audit_from_schedule,
 )
@@ -37,6 +39,19 @@ h1,h2,h3{color:#17365d}.small-note{color:#64748b;font-size:.88rem}.status-ok{col
 @st.cache_data(show_spinner=False)
 def analyse_bytes(payload: bytes, name: str):
     return load_and_analyse(payload, name)
+
+
+@st.cache_data(show_spinner=False)
+def analyse_source_set(source_items: tuple[tuple[str, str, bytes], ...]):
+    bundles = [load_and_analyse(payload, name) for _, name, payload in source_items]
+    source_name = " + ".join(f"{version}：{name}" for version, name, _ in source_items)
+    return merge_analysis_bundles(bundles, source_name)
+
+
+@st.cache_resource(show_spinner=False)
+def shared_upload_store():
+    """Process-wide latest EDC files; shared by all browser sessions on this server."""
+    return {"lock": threading.RLock(), "sources": {}}
 
 
 @st.cache_data(ttl=300, show_spinner="正在从腾讯文档同步最新随访数据……")
@@ -193,19 +208,66 @@ def individual_chart(person: pd.DataFrame, outcome: pd.Series, chart_type: str):
 
 
 st.sidebar.title("数据与筛选")
-uploaded = st.sidebar.file_uploader("上传主数据Excel", type=["xlsx", "xls"], help="需包含DM和QS_YGTSS工作表。上传数据仅在当前本地会话使用。")
+uploaded_files = st.sidebar.file_uploader(
+    "上传新旧库Excel",
+    type=["xlsx", "xls"],
+    accept_multiple_files=True,
+    help="可上传1.0旧库、V2.0新库中的任意一个或同时上传两个。新文件会替换对应版本，并更新本网页服务的共享缓存。",
+)
 try:
-    if uploaded:
-        bundle = analyse_bytes(uploaded.getvalue(), uploaded.name)
-        source_note = f"本地上传：{uploaded.name}"
-    elif DEFAULT_FILE.exists():
-        bundle = analyse_bytes(DEFAULT_FILE.read_bytes(), DEFAULT_FILE.name)
-        source_note = f"默认示例：{DEFAULT_FILE.name}"
-    else:
+    store = shared_upload_store()
+    with store["lock"]:
+        if "1.0" not in store["sources"] and DEFAULT_FILE.exists():
+            default_payload = DEFAULT_FILE.read_bytes()
+            store["sources"]["1.0"] = {
+                "name": DEFAULT_FILE.name,
+                "payload": default_payload,
+                "digest": hashlib.sha256(default_payload).hexdigest(),
+                "updated_at": datetime.fromtimestamp(DEFAULT_FILE.stat().st_mtime),
+                "origin": "内置默认数据",
+            }
+
+    processed_hashes = st.session_state.setdefault("processed_edc_upload_hashes", set())
+    updated_versions: list[str] = []
+    for uploaded in uploaded_files:
+        payload = uploaded.getvalue()
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest in processed_hashes:
+            continue
+        version = detect_crf_version(payload)
+        # Validate before replacing the shared version, so a bad upload cannot poison other sessions.
+        analyse_bytes(payload, uploaded.name)
+        with store["lock"]:
+            store["sources"][version] = {
+                "name": uploaded.name,
+                "payload": payload,
+                "digest": digest,
+                "updated_at": datetime.now(),
+                "origin": "网页上传",
+            }
+        processed_hashes.add(digest)
+        updated_versions.append(version)
+    if updated_versions:
+        st.sidebar.success(f"已更新共享缓存：{'、'.join(updated_versions)}")
+
+    with store["lock"]:
+        source_snapshot = {
+            version: dict(item) for version, item in store["sources"].items()
+        }
+    if not source_snapshot:
         st.title("XEAS随访数据及主要疗效看板")
-        st.info("请在左侧上传包含 DM、QS_YGTSS 和 SV 工作表的 Excel 文件。")
-        st.caption("为保护试验参与者数据，在线版不内置原始数据；上传文件仅用于当前会话的分析。")
+        st.info("请在左侧上传包含 DM、QS_YGTSS 和 SV 工作表的新库或旧库 Excel 文件。")
         st.stop()
+    version_order = {"1.0": 0, "V2.0": 1}
+    source_items = tuple(
+        (version, item["name"], item["payload"])
+        for version, item in sorted(source_snapshot.items(), key=lambda pair: version_order.get(pair[0], 99))
+    )
+    bundle = analyse_source_set(source_items)
+    source_note = "；".join(
+        f"{version} {item['name']}（{item['origin']}，{item['updated_at']:%Y-%m-%d %H:%M}）"
+        for version, item in sorted(source_snapshot.items(), key=lambda pair: version_order.get(pair[0], 99))
+    )
 except Exception as exc:
     st.error(f"数据读取失败：{exc}")
     st.stop()

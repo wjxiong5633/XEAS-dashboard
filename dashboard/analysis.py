@@ -141,6 +141,58 @@ def load_and_analyse(source: str | Path | BinaryIO | bytes, source_name: str = "
     return AnalysisBundle(dm=dm, longitudinal=long, v5_change=v5, visit_tracking=visit_tracking, validation=validation, source_name=source_name)
 
 
+def detect_crf_version(source: str | Path | BinaryIO | bytes) -> str:
+    """Read the EDC CRF version and normalize it to the two supported libraries."""
+    book = _read_excel(source)
+    if "DOMAIN_NAME" not in book.sheet_names:
+        raise ValueError("缺少DOMAIN_NAME工作表，无法判断新旧库版本。")
+    version_frame = pd.read_excel(book, sheet_name="DOMAIN_NAME")
+    if "CRF_VERSION" not in version_frame.columns:
+        raise ValueError("DOMAIN_NAME工作表缺少CRF_VERSION字段。")
+    versions = version_frame["CRF_VERSION"].dropna().astype(str).str.strip()
+    if versions.str.upper().eq("V2.0").any():
+        return "V2.0"
+    if versions.eq("1.0").any():
+        return "1.0"
+    raise ValueError("无法识别CRF版本；目前仅支持1.0和V2.0。")
+
+
+def merge_analysis_bundles(bundles: list[AnalysisBundle], source_name: str) -> AnalysisBundle:
+    """Combine old/new CRF libraries into one analysis population."""
+    if not bundles:
+        raise ValueError("没有可分析的数据文件。")
+
+    dm = pd.concat([bundle.dm for bundle in bundles], ignore_index=True)
+    dm = dm.drop_duplicates("subject_id", keep="last").sort_values("subject_id").reset_index(drop=True)
+
+    longitudinal = pd.concat([bundle.longitudinal for bundle in bundles], ignore_index=True)
+    duplicate = longitudinal.groupby(["subject_id", "visit"]).size().reset_index(name="n").query("n > 1")
+    if not duplicate.empty:
+        repeated = "、".join(duplicate["subject_id"].astype(str).drop_duplicates().head(5))
+        raise ValueError(f"新旧库存在重复试验参与者访视记录：{repeated}。请检查上传文件是否属于同一批导出。")
+    longitudinal = longitudinal.sort_values(["subject_id", "week"]).reset_index(drop=True)
+
+    visit_tracking = pd.concat([bundle.visit_tracking for bundle in bundles], ignore_index=True)
+    visit_tracking = visit_tracking.drop_duplicates().sort_values(["subject_id", "visit", "visit_date"], na_position="last").reset_index(drop=True)
+
+    v5_change = build_v5_change(longitudinal, dm)
+    validation = pd.DataFrame([
+        ("数据版本", "通过", len(bundles), "已同时纳入1.0旧库和V2.0新库" if len(bundles) == 2 else "当前仅有一个CRF版本"),
+        ("DM工作表", "通过", len(dm), "合并后试验参与者数"),
+        ("QS_YGTSS工作表", "通过", longitudinal["subject_id"].nunique(), "合并后YGTSS试验参与者数"),
+        ("跨库重复ID-访视", "通过", 0, "新旧库合并主键无重复"),
+        ("DM年龄缺失/范围外（含筛败）", "提示", int(dm["age_group"].isna().sum()), "DM全部试验参与者口径；不进入A/B/C分组"),
+    ], columns=["检查项", "状态", "数量", "说明"])
+    return AnalysisBundle(
+        dm=dm,
+        longitudinal=longitudinal,
+        v5_change=v5_change,
+        visit_tracking=visit_tracking,
+        validation=validation,
+        source_name=source_name,
+    )
+
+
 def recruitment_summary(bundle: AnalysisBundle) -> dict[str, int]:
     status_by_id = dict(zip(bundle.dm["subject_id"].astype(str), bundle.dm["subject_status"].fillna("未知").astype(str).str.strip()))
     for subject_id in MANUAL_SCREEN_FAILURE_IDS:
